@@ -11,16 +11,30 @@ public class mp3ChapterReader{
     
     public init(){}
     
-    public func getID3Dict(from fileURL: URL) {
-        var ID3Tags = [String:Any]()
+    public func getID3Dict(from fileURL: URL) -> [[String: Any]] {
         
         let frames = extractID3Frames(from: fileURL)
         
-        for frame in frames {
-            
+       return convertArrayToDictionaries(frames)
+        
+        
+    }
+    
+    func convertArrayToDictionaries<T: Decodable>(_ instances: [T]) -> [[String: Any]] {
+        return instances.map { convertToDictionary($0) }
+    }
+    
+    func convertToDictionary<T: Decodable>(_ instance: T) -> [String: Any] {
+        let mirror = Mirror(reflecting: instance)
+        var dictionary: [String: Any] = [:]
+        
+        for child in mirror.children {
+            if let key = child.label {
+                dictionary[key] = child.value
+            }
         }
         
-        
+        return dictionary
     }
     
     
