@@ -107,7 +107,7 @@ public class Frame {
     
 }
 
-class TitleFrame:Frame{
+public class TitleFrame:Frame{
     var textEncoding:String.Encoding = .isoLatin1
     var information:String?
     
@@ -123,7 +123,7 @@ class TitleFrame:Frame{
     }
 }
 
-class PictureFrame:Frame{
+public class PictureFrame:Frame{
     var mimeType:String?
     var type:PictureType?
     var description:String?
@@ -157,7 +157,7 @@ class PictureFrame:Frame{
     }
 }
 
-class LinkFrame:Frame{
+public class LinkFrame:Frame{
     var textEncoding:String.Encoding = .isoLatin1
     var description:String?
     var url:URL?
@@ -179,7 +179,7 @@ class LinkFrame:Frame{
 }
 
 
-class ChapFrame:Frame{
+public class ChapFrame:Frame{
     
     var elementID:String = ""
     var startTime:Int = 0 // in milliseconds
