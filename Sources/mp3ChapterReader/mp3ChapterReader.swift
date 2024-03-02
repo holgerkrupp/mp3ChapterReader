@@ -20,34 +20,47 @@ public class mp3ChapterReader{
         
     }
     
-    func convertArrayToDictionaries<T: Decodable>(_ instances: [T]) -> [[String: Any]] {
-        return instances.map { convertToDictionary($0) }
-    }
-    
-    func convertToDictionary<T: Decodable>(_ instance: T) -> [String: Any] {
+    // Function to convert an object to a dictionary
+    func convertToDictionary(_ instance: Any) -> [String: Any] {
         var dictionary: [String: Any] = [:]
         
-        // Get the mirror for the instance
-        var mirror: Mirror? = Mirror(reflecting: instance)
-        
-        // Loop through the mirrors of the instance and its superclasses
-        while let currentMirror = mirror {
-            for child in currentMirror.children {
-                if let key = child.label {
-                    if let nestedArray = child.value as? [Frame] {
-                        // Recursively convert nested arrays
-                        let nestedDictionaries = nestedArray.map { convertToDictionary($0) }
-                        dictionary[key] = nestedDictionaries
-                    } else {
-                        dictionary[key] = child.value
-                    }
-                }
+        if let instance = instance as? Frame {
+            dictionary["frameID"] = instance.frameID
+            dictionary["size"] = instance.size
+            dictionary["flags"] = instance.flags
+            
+            if let titleFrame = instance as? TitleFrame {
+                dictionary["textEncoding"] = titleFrame.textEncoding
+                dictionary["information"] = titleFrame.information
+            } else if let pictureFrame = instance as? PictureFrame {
+                dictionary["mimeType"] = pictureFrame.mimeType
+                dictionary["type"] = pictureFrame.type
+                dictionary["description"] = pictureFrame.description
+            } else if let linkFrame = instance as? LinkFrame {
+                dictionary["textEncoding"] = linkFrame.textEncoding
+                dictionary["description"] = linkFrame.description
+                dictionary["url"] = linkFrame.url
+            } else if let chapFrame = instance as? ChapFrame {
+                dictionary["elementID"] = chapFrame.elementID
+                dictionary["startTime"] = chapFrame.startTime
+                dictionary["endTime"] = chapFrame.endTime
+                dictionary["startOffset"] = chapFrame.startOffset
+                dictionary["endOffset"] = chapFrame.endOffset
+                dictionary["frames"] = chapFrame.frames.map { convertToDictionary($0) }
             }
-            // Move to the superclass mirror
-            mirror = currentMirror.superclassMirror
+            
+            // Handle other subclasses...
+            
+            // Handle common properties for all subclasses
+            // ...
         }
         
         return dictionary
+    }
+    
+    // Function to convert an array of objects to an array of dictionaries
+    func convertArrayToDictionaries(_ instances: [Any]) -> [[String: Any]] {
+        return instances.map { convertToDictionary($0) }
     }
     
     
