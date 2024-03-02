@@ -25,18 +25,26 @@ public class mp3ChapterReader{
     }
     
     func convertToDictionary<T: Decodable>(_ instance: T) -> [String: Any] {
-        let mirror = Mirror(reflecting: instance)
         var dictionary: [String: Any] = [:]
         
-        for child in mirror.children {
-            if let key = child.label {
-                if let nestedArray = child.value as? [Frame] {
-                    let nestedDictionaries = convertArrayToDictionaries(nestedArray)
-                    dictionary[key] = nestedDictionaries
-                } else {
-                    dictionary[key] = child.value
+        // Get the mirror for the instance
+        var mirror: Mirror? = Mirror(reflecting: instance)
+        
+        // Loop through the mirrors of the instance and its superclasses
+        while let currentMirror = mirror {
+            for child in currentMirror.children {
+                if let key = child.label {
+                    if let nestedArray = child.value as? [Frame] {
+                        // Recursively convert nested arrays
+                        let nestedDictionaries = nestedArray.map { convertToDictionary($0) }
+                        dictionary[key] = nestedDictionaries
+                    } else {
+                        dictionary[key] = child.value
+                    }
                 }
             }
+            // Move to the superclass mirror
+            mirror = currentMirror.superclassMirror
         }
         
         return dictionary
