@@ -11,6 +11,20 @@ public class mp3ChapterReader{
     
     public init(){}
     
+    public func getID3Dict(from fileURL: URL) {
+        var ID3Tags = [String:Any]()
+        
+        let frames = extractID3Frames(from: fileURL)
+        
+        for frame in frames {
+            
+        }
+        
+        
+    }
+    
+    
+    
     public func extractID3Frames(from fileURL: URL) -> [Frame] {
         do {
             // Read the entire file into Data

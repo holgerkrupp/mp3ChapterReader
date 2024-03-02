@@ -9,7 +9,25 @@ import Foundation
 
 let headerSize = 10
 
-public class Frame {
+
+func getEndcoding(with data: UInt8) -> String.Encoding{
+    
+    
+    switch data {
+    case 0x00:
+        return .isoLatin1
+    case 0x01:
+        return .utf16
+    case 0x02:
+        return .utf16BigEndian
+    case 0x03:
+        return .utf8
+    default:
+        return .isoLatin1
+    }
+}
+
+public class Frame: Decodable {
     
     var frameID:String = ""
     var size:Int = 0 // size of the frame, excluding the header
@@ -26,6 +44,17 @@ public class Frame {
         currentPosition += 4
         
         flags = data.subdata(in: currentPosition..<currentPosition+2)
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case frameID, size, flags
+    }
+    
+    required public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        frameID = try container.decode(String.self, forKey: .frameID)
+        size = try container.decode(Int.self, forKey: .size)
+        flags = try container.decodeIfPresent(Data.self, forKey: .flags)
     }
     
     
@@ -85,22 +114,7 @@ public class Frame {
         return (title: information, encoding: encoding, offset: endofString)
     }
     
-    func getEndcoding(with data: UInt8) -> String.Encoding{
-        
-        
-        switch data {
-        case 0x00:
-            return .isoLatin1
-        case 0x01:
-            return .utf16
-        case 0x02:
-            return .utf16BigEndian
-        case 0x03:
-            return .utf8
-        default:
-            return .isoLatin1
-        }
-    }
+
     
     
     
@@ -120,6 +134,27 @@ public class TitleFrame:Frame{
         let extracted = extractTitle(from: stringData)
         textEncoding = extracted.encoding
         information = extracted.title
+    }
+    
+
+    
+    enum TitleCodingKeys: String, CodingKey {
+        case textEncoding, information
+    }
+    
+    required init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: TitleCodingKeys.self)
+
+        // Decode the raw value from the container
+        let rawTextEncoding = try container.decode(UInt8.self, forKey: .textEncoding)
+        
+        // Use the provided function to get the String.Encoding
+        textEncoding = getEndcoding(with: rawTextEncoding)
+
+        information = try container.decodeIfPresent(String.self, forKey: .information)
+        
+        // Call the designated initializer of the superclass
+        try super.init(from: decoder)
     }
 }
 
@@ -155,6 +190,24 @@ public class PictureFrame:Frame{
         image = data.subdata(in: currentPosition..<subFrameEnd)
         
     }
+    
+    enum PictureCodingKeys: String, CodingKey {
+        case mimeType, type, description, image
+    }
+    
+    required init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: PictureCodingKeys.self)
+        
+        mimeType = try container.decodeIfPresent(String.self, forKey: .mimeType)
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        image = try container.decodeIfPresent(Data.self, forKey: .image)
+        
+        // Decode the raw value from the container and directly use PictureType enum
+        type = try container.decodeIfPresent(PictureType.self, forKey: .type)
+        
+        // Call the designated initializer of the superclass
+        try super.init(from: decoder)
+    }
 }
 
 public class LinkFrame:Frame{
@@ -175,6 +228,23 @@ public class LinkFrame:Frame{
         if let string = String(data: data.subdata(in: (currentPosition..<subFrameEnd)), encoding: .isoLatin1){
             url = URL(string: string)
         }
+    }
+    enum LinkCodingKeys: String, CodingKey {
+        case textEncoding, description, url
+    }
+    
+    required init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: LinkCodingKeys.self)
+        
+        // Decode the raw value from the container and directly use String.Encoding
+        let rawTextEncoding = try container.decode(UInt8.self, forKey: .textEncoding)
+        textEncoding = getEndcoding(with: rawTextEncoding)
+        
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        url = try container.decodeIfPresent(URL.self, forKey: .url)
+        
+        // Call the designated initializer of the superclass
+        try super.init(from: decoder)
     }
 }
 
@@ -231,6 +301,25 @@ public class ChapFrame:Frame{
         }
         
 
+    }
+    enum ChapCodingKeys: String, CodingKey {
+        case elementID, startTime, endTime, startOffset, endOffset, frames
+    }
+    
+    required init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: ChapCodingKeys.self)
+        
+        elementID = try container.decode(String.self, forKey: .elementID)
+        startTime = try container.decode(Int.self, forKey: .startTime)
+        endTime = try container.decode(Int.self, forKey: .endTime)
+        startOffset = try container.decode(Int.self, forKey: .startOffset)
+        endOffset = try container.decode(Int.self, forKey: .endOffset)
+        
+        // Decode the array of frames
+        frames = try container.decode([Frame].self, forKey: .frames)
+        
+        // Call the designated initializer of the superclass
+        try super.init(from: decoder)
     }
 }
 
