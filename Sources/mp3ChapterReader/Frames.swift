@@ -68,6 +68,9 @@ public class Frame: Decodable {
         
         switch frameType {
             
+        case "CHAP":
+            return ChapFrame(data: data)
+            
         case "TIT2":
             return TitleFrame(data: data)
 
