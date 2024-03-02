@@ -24,6 +24,8 @@ public class mp3ChapterReader{
     func convertToDictionary(_ instance: Any) -> [String: Any] {
         var dictionary: [String: Any] = [:]
         
+        print(Any.self)
+        
         if let instance = instance as? Frame {
             dictionary["frameID"] = instance.frameID
             dictionary["size"] = instance.size
@@ -65,7 +67,7 @@ public class mp3ChapterReader{
     
     
     
-    public func extractID3Frames(from fileURL: URL) -> [Frame] {
+    public func extractID3Frames(from fileURL: URL) -> [Any] {
         do {
             // Read the entire file into Data
             let fileData = try Data(contentsOf: fileURL)
@@ -90,7 +92,7 @@ public class mp3ChapterReader{
             }
             
             // Read frames until the end of the file
-            var frames: [Frame] = []
+            var frames: [Any] = []
             
             while currentPosition + 10 <= fileData.count {
                 // Add a check for frame data length
