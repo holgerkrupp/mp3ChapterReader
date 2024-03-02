@@ -30,7 +30,12 @@ public class mp3ChapterReader{
         
         for child in mirror.children {
             if let key = child.label {
-                dictionary[key] = child.value
+                if let nestedArray = child.value as? [Frame] {
+                    let nestedDictionaries = convertArrayToDictionaries(nestedArray)
+                    dictionary[key] = nestedDictionaries
+                } else {
+                    dictionary[key] = child.value
+                }
             }
         }
         
