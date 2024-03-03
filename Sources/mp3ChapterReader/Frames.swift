@@ -178,6 +178,7 @@ public class PictureFrame:Frame{
         
         
         currentPosition += extracted.offset ?? 0
+        currentPosition += 1
         print("- currentPosition - \(currentPosition.description)")
         
         type = PictureType(rawValue: data[currentPosition])

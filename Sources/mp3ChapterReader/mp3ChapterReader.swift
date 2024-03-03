@@ -10,7 +10,7 @@ import Foundation
 public class mp3ChapterReader{
     
     var fileData:Data
-    var frames:[Frame] = []
+ public var frames:[Frame] = []
     
     public init?(with fileURL: URL){
         do {
