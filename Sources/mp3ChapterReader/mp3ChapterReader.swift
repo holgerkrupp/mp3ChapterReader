@@ -40,7 +40,7 @@ public class mp3ChapterReader{
     func convertToDictionary(_ instance: Any) -> [String: Any] {
         var dictionary: [String: Any] = [:]
         
-        print(Any.self)
+  
         
         if let instance = instance as? Frame {
             dictionary["frameID"] = instance.frameID

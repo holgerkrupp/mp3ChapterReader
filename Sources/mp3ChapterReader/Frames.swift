@@ -66,6 +66,8 @@ public class Frame: Decodable {
         let frameType = String(data: data.subdata(in: currentPosition..<(currentPosition + 4)), encoding: .utf8) ?? ""
         currentPosition += 4
         
+        print(frameType)
+        
         switch frameType {
             
         case "CHAP":
