@@ -125,7 +125,8 @@ public class mp3ChapterReader{
                  
                  */
                 // Append the frame to the frames array
-                frames.append(Frame(data: frameData))
+             
+                frames.append(Frame.createInstance(data: frameData))
                 
                 // Move to the next frame
                 currentPosition += (10 + adjustedFrameSize)
