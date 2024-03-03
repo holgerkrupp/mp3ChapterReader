@@ -9,11 +9,27 @@ import Foundation
 
 public class mp3ChapterReader{
     
-    public init(){}
+    var fileData:Data
+    var frames:[Frame] = []
     
-    public func getID3Dict(from fileURL: URL) -> [[String: Any]] {
+    public init?(with fileURL: URL){
+        do {
+            fileData = try Data(contentsOf: fileURL)
+            // Check if the file starts with "ID3" (indicating it's an ID3v2 tag)
+            guard fileData.count >= 3, fileData.prefix(3) == Data("ID3".utf8) else {
+                print("Not an ID3v2 tag.")
+                return nil
+            }
+        }catch{
+            print(error)
+            return nil
+        }
         
-        let frames = extractID3Frames(from: fileURL)
+        frames = extractID3Frames()
+        
+    }
+    
+    public func getID3Dict() -> [[String: Any]] {
         
        return convertArrayToDictionaries(frames)
         
@@ -67,16 +83,9 @@ public class mp3ChapterReader{
     
     
     
-    public func extractID3Frames(from fileURL: URL) -> [Any] {
-        do {
-            // Read the entire file into Data
-            let fileData = try Data(contentsOf: fileURL)
+    func extractID3Frames() -> [Frame] {
+       
             
-            // Check if the file starts with "ID3" (indicating it's an ID3v2 tag)
-            guard fileData.count >= 3, fileData.prefix(3) == Data("ID3".utf8) else {
-                print("Not an ID3v2 tag.")
-                return []
-            }
             
             // Parse the ID3v2 tag header
             let version = fileData[3]
@@ -92,7 +101,7 @@ public class mp3ChapterReader{
             }
             
             // Read frames until the end of the file
-            var frames: [Any] = []
+            var frames: [Frame] = []
             
             while currentPosition + 10 <= fileData.count {
                 // Add a check for frame data length
@@ -135,10 +144,7 @@ public class mp3ChapterReader{
             }
             
             return frames
-        } catch {
-            print("Error reading file: \(error)")
-            return []
-        }
+
     }
     
 }
