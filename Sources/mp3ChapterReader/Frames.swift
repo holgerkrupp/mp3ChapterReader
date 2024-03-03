@@ -97,9 +97,7 @@ public class Frame: Decodable {
         
         currentPosition += 1
         var endofString = subFrameEnd
-        
-        print("- currentPosition - \(currentPosition.description)")
-        
+                
         if let utf16String = String(data: data.subdata(in: (currentPosition..<subFrameEnd)), encoding: encoding) {
             // Find the null termination
             if let nullTerminationRange = utf16String.range(of: "\0") {
@@ -178,8 +176,7 @@ public class PictureFrame:Frame{
         
         
         currentPosition += extracted.offset ?? 0
-        currentPosition += 1
-        print("- currentPosition - \(currentPosition.description)")
+        print("- APIC currentPosition - \(currentPosition.description)")
         
         type = PictureType(rawValue: data[currentPosition])
         
