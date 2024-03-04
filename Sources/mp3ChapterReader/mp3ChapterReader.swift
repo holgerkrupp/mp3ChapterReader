@@ -29,56 +29,47 @@ public class mp3ChapterReader{
         
     }
     
-    public func getID3Dict() -> [[String: Any]] {
+    public func getID3Dict() -> [String: Any] {
         
-       return convertArrayToDictionaries(frames)
+       return convertArrayToDictionary(frames)
         
         
     }
+
     
-    // Function to convert an object to a dictionary
-    func convertToDictionary(_ instance: Any) -> [String: Any] {
-        var dictionary: [String: Any] = [:]
+    // Function to convert an array of objects to a dictionary
+    func convertArrayToDictionary<T: Decodable>(_ instances: [T]) -> [String: Any] {
+        var framesDictionary: [String: Any] = [:]
+        var chaptersDictionary: [String: Any] = [:]
         
-  
         
-        if let instance = instance as? Frame {
-            dictionary["frameID"] = instance.frameID
-            dictionary["size"] = instance.size
-            dictionary["flags"] = instance.flags
+        for instance in instances {
             
-            if let titleFrame = instance as? TitleFrame {
-                dictionary["textEncoding"] = titleFrame.textEncoding
-                dictionary["information"] = titleFrame.information
-            } else if let pictureFrame = instance as? PictureFrame {
-                dictionary["mimeType"] = pictureFrame.mimeType
-                dictionary["type"] = pictureFrame.type
-                dictionary["description"] = pictureFrame.description
-            } else if let linkFrame = instance as? LinkFrame {
-                dictionary["textEncoding"] = linkFrame.textEncoding
-                dictionary["description"] = linkFrame.description
-                dictionary["url"] = linkFrame.url
-            } else if let chapFrame = instance as? ChapFrame {
-                dictionary["elementID"] = chapFrame.elementID
-                dictionary["startTime"] = chapFrame.startTime
-                dictionary["endTime"] = chapFrame.endTime
-                dictionary["startOffset"] = chapFrame.startOffset
-                dictionary["endOffset"] = chapFrame.endOffset
-                dictionary["frames"] = chapFrame.frames.map { convertToDictionary($0) }
+            if let frame = instance as? ChapFrame {
+                chaptersDictionary[frame.elementID] = frame.createDictionary()
+            }else if let frame = instance as? Frame {
+                if let frameID = frame.frameID.isEmpty ? nil : frame.frameID {
+                    let frameDictionary = frame.createDictionary()
+                    framesDictionary.merge(frameDictionary) { old, new in
+                        old
+                    }
+                }
             }
             
-            // Handle other subclasses...
-            
-            // Handle common properties for all subclasses
-            // ...
+
         }
         
-        return dictionary
-    }
-    
-    // Function to convert an array of objects to an array of dictionaries
-    func convertArrayToDictionaries(_ instances: [Any]) -> [[String: Any]] {
-        return instances.map { convertToDictionary($0) }
+        var resultDictionary: [String: Any] = [:]
+        
+        if !framesDictionary.isEmpty {
+            resultDictionary = framesDictionary
+        }
+        
+        if !chaptersDictionary.isEmpty {
+            resultDictionary["Chapters"] = chaptersDictionary
+        }
+        
+        return resultDictionary
     }
     
     

@@ -46,6 +46,14 @@ public class Frame: Decodable {
         flags = data.subdata(in: currentPosition..<currentPosition+2)
     }
     
+    func createDictionary() -> [String:Any]{
+        var dict: [String:Any] = [:]
+        dict[frameID] = frameID
+        
+        return dict
+    }
+    
+    
     enum CodingKeys: String, CodingKey {
         case frameID, size, flags
     }
@@ -57,8 +65,6 @@ public class Frame: Decodable {
         flags = try container.decodeIfPresent(Data.self, forKey: .flags)
     }
     
-    
-    
     class func createInstance(data: Data) -> Frame {
         
         var currentPosition = 0  // 4 if the identifier would be part of the data
@@ -66,7 +72,6 @@ public class Frame: Decodable {
         let frameType = String(data: data.subdata(in: currentPosition..<(currentPosition + 4)), encoding: .utf8) ?? ""
         currentPosition += 4
         
-        print(frameType)
         
         switch frameType {
             
@@ -139,7 +144,12 @@ public class TitleFrame:Frame{
         information = extracted.title
     }
     
-
+    override func createDictionary() -> [String:Any]{
+        var dict: [String:Any] = [:]
+     //   dict["FrameID"] = frameID
+        dict["Title"] = information
+        return dict
+    }
     
     enum TitleCodingKeys: String, CodingKey {
         case textEncoding, information
@@ -178,7 +188,6 @@ public class PictureFrame:Frame{
         
         
         currentPosition += extracted.offset ?? 0
-        print("- APIC currentPosition - \(currentPosition.description)")
         
         type = PictureType(rawValue: data[currentPosition])
         
@@ -192,6 +201,17 @@ public class PictureFrame:Frame{
         
         image = data.subdata(in: currentPosition..<subFrameEnd)
         
+    }
+    
+    override func createDictionary() -> [String:Any]{
+        var imagedict: [String:Any] = [:]
+    //    imagedict["FrameID"] = frameID
+        imagedict["Description"] = description
+        imagedict["Type"] = type?.description
+        imagedict["MIME type"] = mimeType
+        imagedict["Data"] = image
+        let dict:[String:Any] = ["Image: \(type?.description)":imagedict]
+        return dict
     }
     
     enum PictureCodingKeys: String, CodingKey {
@@ -217,6 +237,8 @@ public class LinkFrame:Frame{
     var textEncoding:String.Encoding = .isoLatin1
     var description:String?
     var url:URL?
+    
+    
     required init(data:Data){
         super.init(data: data)
         let subFrameEnd = headerSize + size
@@ -227,11 +249,24 @@ public class LinkFrame:Frame{
         textEncoding = extracted.encoding
         description = extracted.title
         currentPosition += extracted.offset ?? 0
+        currentPosition += 1
     
         if let string = String(data: data.subdata(in: (currentPosition..<subFrameEnd)), encoding: .isoLatin1){
             url = URL(string: string)
         }
     }
+    
+    override func createDictionary() -> [String:Any]{
+        var dict: [String:Any] = [:]
+        dict["FrameID"] = frameID
+        dict["Description"] = description
+        dict["Url"] = url
+        return dict
+    }
+    
+    
+    
+    
     enum LinkCodingKeys: String, CodingKey {
         case textEncoding, description, url
     }
@@ -266,7 +301,6 @@ public class ChapFrame:Frame{
         
         super.init(data: data)
 
-        print("extract CHAMP frame")
     
         // CHAP Frame Required Elements Starting after the Header data (always 10 bytes)
         var currentPosition = headerSize
@@ -293,7 +327,6 @@ public class ChapFrame:Frame{
         // OPTIONAL SUB FRAMES
 
         while currentPosition < size + headerSize {
-            
             let subFrameData = data.subdata(in: currentPosition..<data.count)
     
             let newFrame =  Frame.createInstance(data: subFrameData)
@@ -323,6 +356,19 @@ public class ChapFrame:Frame{
         
         // Call the designated initializer of the superclass
         try super.init(from: decoder)
+    }
+    
+    override func createDictionary() -> [String:Any]{
+        var dict: [String:Any] = [:]
+      //  dict[elementID] = elementID
+        dict["timeScale"] = "seconds"
+        dict["startTime"] = startTime / 1000
+        dict["endTime"] = endTime / 1000
+        var chapterDict:[String:Any] = [:]
+        for frame in frames {
+            dict.merge(frame.createDictionary(), uniquingKeysWith: { (current, _) in current })
+        }
+        return dict
     }
 }
 
