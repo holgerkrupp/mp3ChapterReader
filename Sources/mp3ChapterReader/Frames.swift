@@ -118,8 +118,14 @@ public class Frame: Decodable {
             print("Unable to decode data as UTF-16.")
         }
         
-        let information = String(data:  data.subdata(in: (currentPosition..<endofString)), encoding: encoding)
-        return (title: information, encoding: encoding, offset: endofString)
+        if let information = String(data:  data.subdata(in: (currentPosition..<endofString)), encoding: encoding){
+            return (title: information, encoding: encoding, offset: endofString)
+
+        }else{
+            return (title: nil, encoding: encoding, offset: 0)
+
+        }
+        
     }
     
 
@@ -177,6 +183,7 @@ public class PictureFrame:Frame{
     var description:String?
     var image:Data?
     
+    
     required init(data:Data){
         super.init(data: data)
         let subFrameEnd = headerSize + size
@@ -192,25 +199,48 @@ public class PictureFrame:Frame{
         type = PictureType(rawValue: data[currentPosition])
         
         currentPosition += 1
+        print("currentPosition \(currentPosition)")
         let descData = data.subdata(in: currentPosition..<subFrameEnd)
         let extractedDescription = extractTitle(from: descData)
         description = extractedDescription.title
-        
+        dump(description)
         currentPosition += extractedDescription.offset ?? 1
         currentPosition += 1
-        
-        image = data.subdata(in: currentPosition..<subFrameEnd)
-        
+        print("currentPosition \(currentPosition)")
+        print("extracted offset: \(extractedDescription.offset)")
+        print("image data from \(currentPosition.description) until \(subFrameEnd.description)")
+
+        if currentPosition < subFrameEnd{
+            image = data.subdata(in: currentPosition..<subFrameEnd)
+            if #available(iOS 16.0, *) {
+            var fileManager = FileManager.default
+            var docPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
+            
+                if let  path = docPath?.appending(component: subFrameEnd.description.appending(".jpg")).path(){
+                    fileManager.createFile(atPath: path, contents: image)
+                    print(path)
+                }
+            } 
+        }else{
+            print("Image issue: Position: \(currentPosition)- subFrameEnd: \(subFrameEnd) - size: \(size+headerSize)")
+        }
     }
     
     override func createDictionary() -> [String:Any]{
         var imagedict: [String:Any] = [:]
     //    imagedict["FrameID"] = frameID
         imagedict["Description"] = description
-        imagedict["Type"] = type?.description
+        imagedict["Type"] = type?.description ?? ""
         imagedict["MIME type"] = mimeType
         imagedict["Data"] = image
-        let dict:[String:Any] = ["Image: \(type?.description)":imagedict]
+        
+        var key = frameID
+        
+        if let type = imagedict["Type"]{
+            key.append(" : \(type)")
+        }
+        
+        let dict:[String:Any] = [frameID:imagedict]
         return dict
     }
     
@@ -248,6 +278,9 @@ public class LinkFrame:Frame{
         let extracted = extractTitle(from: stringData)
         textEncoding = extracted.encoding
         description = extracted.title
+        
+        
+        
         currentPosition += extracted.offset ?? 0
         currentPosition += 1
     
@@ -290,8 +323,8 @@ public class LinkFrame:Frame{
 public class ChapFrame:Frame{
     
     var elementID:String = ""
-    var startTime:Int = 0 // in milliseconds
-    var endTime:Int = 0  // in milliseconds
+    var startTime:Double = 0 // in milliseconds
+    var endTime:Double = 0  // in milliseconds
     var startOffset:Int = 0
     var endOffset:Int = 0
     
@@ -311,10 +344,10 @@ public class ChapFrame:Frame{
             currentPosition += 1 // <- move passed NULL-terminator
         }
         
-        startTime = Int(data.readUInt32BigEndian(at: currentPosition))
+        startTime = Double(data.readUInt32BigEndian(at: currentPosition))
         currentPosition += 4
         
-        endTime = Int(data.readUInt32BigEndian(at: currentPosition))
+        endTime = Double(data.readUInt32BigEndian(at: currentPosition))
         currentPosition += 4
         
         startOffset = Int(data.readUInt32BigEndian(at: currentPosition))
@@ -327,11 +360,12 @@ public class ChapFrame:Frame{
         // OPTIONAL SUB FRAMES
 
         while currentPosition < size + headerSize {
+            
             let subFrameData = data.subdata(in: currentPosition..<data.count)
     
             let newFrame =  Frame.createInstance(data: subFrameData)
             frames.append(newFrame)
-                
+            print("previous subframe: \(currentPosition.description) - \(currentPosition + newFrame.size + headerSize)")
             currentPosition += newFrame.size + headerSize
 
         }
@@ -346,8 +380,8 @@ public class ChapFrame:Frame{
         let container = try decoder.container(keyedBy: ChapCodingKeys.self)
         
         elementID = try container.decode(String.self, forKey: .elementID)
-        startTime = try container.decode(Int.self, forKey: .startTime)
-        endTime = try container.decode(Int.self, forKey: .endTime)
+        startTime = try container.decode(Double.self, forKey: .startTime)
+        endTime = try container.decode(Double.self, forKey: .endTime)
         startOffset = try container.decode(Int.self, forKey: .startOffset)
         endOffset = try container.decode(Int.self, forKey: .endOffset)
         
