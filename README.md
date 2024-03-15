@@ -7,23 +7,31 @@ The .getID3Dict generates a dictionary of the identified ID3 Frames as a swift d
 
 This is how i use it at the moment (06. March 2024) in my app Raúl:
 
- >           if let mp3Reader = mp3ChapterReader(with: url){
- >               let dict = mp3Reader.getID3Dict()
- >               if let chaptersDict = dict["Chapters"] as? [String:[String:Any]]{
- >                   var chapters: [Chapter] = []
- >                   for chapter in chaptersDict {
- >                       let newChaper = Chapter()
- >                       newChaper.title = chapter.value["Title"] as? String ?? ""
- >                       newChaper.start = chapter.value["startTime"] as? Double ?? 0
- >                      
- >                       newChaper.duration = (chapter.value["endTime"] as? Double ?? 0) - (newChaper.start ?? 0)
- >                       newChaper.type = .embedded
- >                       if let imagedata = (chapter.value["APIC"] as? [String:Any])?["Data"] as? Data{
- >                           newChaper.imageData = imagedata
- >                       }
- >                       chapters.append(newChaper)
- >                   }
- >                   return chapters
- >               }
- >            }
+>            if let mp3Reader = mp3ChapterReader(with: url){
+>                let dict = mp3Reader.getID3Dict()
+>                if let chaptersDict = dict["Chapters"] as? [String:[String:Any]]{
+>                    var chapters: [Chapter] = []
+>                    for chapter in chaptersDict {
+>                        let newChaper = Chapter()
+>
+>                        newChaper.title = chapter.value["TIT2"] as? String ?? ""
+>                        newChaper.subtitle = chapter.value["TIT3"] as? String ?? ""
+>                        newChaper.start = chapter.value["startTime"] as? Double ?? 0
+>
+>                        if let url = chapter.value["Url"] as? String{
+>                            newChaper.link = URL(string: url)
+>                        }
+>                        
+>                        newChaper.duration = (chapter.value["endTime"] as? Double ?? 0) - (newChaper.start ?? 0)
+>                        if let imagedata = (chapter.value["APIC"] as? [String:Any])?["Data"] as? Data{
+>                            newChaper.imageData = imagedata
+>                        }else{
+>                            print("ImageChapter without Image data")
+>                        }
+>                        chapters.append(newChaper)
+>                    }
+>                    return chapters
+>                }
+>
+>            }
 
