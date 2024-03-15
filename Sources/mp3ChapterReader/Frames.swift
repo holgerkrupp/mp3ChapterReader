@@ -78,8 +78,8 @@ public class Frame: Decodable {
         case "CHAP":
             return ChapFrame(data: data)
             
-        case "TIT2":
-            return TitleFrame(data: data)
+        case "TIT1", "TIT2", "TIT3", "TALB", "TOAL", "TRCK", "TPOS", "TSST", "TSRC", "TPE1", "TPE2", "TPE3", "TPE4", "TOPE", "TEXT", "TOLY", "TCOM", "TMCL", "TIPL", "TENC":
+            return TextFrame(data: data)
 
         case "APIC":
             return PictureFrame(data: data)
@@ -135,7 +135,7 @@ public class Frame: Decodable {
     
 }
 
-public class TitleFrame:Frame{
+public class TextFrame:Frame{
     var textEncoding:String.Encoding = .isoLatin1
     var information:String?
     
@@ -152,8 +152,11 @@ public class TitleFrame:Frame{
     
     override func createDictionary() -> [String:Any]{
         var dict: [String:Any] = [:]
-     //   dict["FrameID"] = frameID
-        dict["Title"] = information
+  //      dict["FrameID"] = frameID
+        if frameID == "TIT1"{
+            dict["Title"] = information
+        }
+            dict[frameID] = information
         return dict
     }
     
@@ -398,7 +401,7 @@ public class ChapFrame:Frame{
         dict["timeScale"] = "seconds"
         dict["startTime"] = startTime / 1000
         dict["endTime"] = endTime / 1000
-        var chapterDict:[String:Any] = [:]
+       // var chapterDict:[String:Any] = [:]
         for frame in frames {
             dict.merge(frame.createDictionary(), uniquingKeysWith: { (current, _) in current })
         }
