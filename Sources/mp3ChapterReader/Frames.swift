@@ -33,8 +33,26 @@ public class Frame: Decodable {
     var size:Int = 0 // size of the frame, excluding the header
     var flags:Data?
     
+    // Frame status flags
+    var isTagAlterPreservation: Bool = false
+    var isFileAlterPreservation: Bool = false
+    var isReadOnly: Bool = false
+    
+    // Frame format flags
+    var isGroupingIdentity: Bool = false
+    var isCompressed: Bool = false
+    var isEncrypted: Bool = false
+    var isUnsynchronized: Bool = false
+    var hasDataLengthIndicator: Bool = false
+    
     required init(data:Data){
         var currentPosition = 0  // 4 if the identifier would be part of the data
+        
+        // Check if we have enough data for a frame header
+        guard data.count >= 10 else {
+            print("Error: Frame data too short")
+            return
+        }
         
         frameID = String(data: data.subdata(in: currentPosition..<(currentPosition + 4)), encoding: .utf8) ?? ""
         currentPosition += 4
@@ -43,12 +61,44 @@ public class Frame: Decodable {
         size = Int(frameSizeBytes.readUInt32BigEndian(at: 0))
         currentPosition += 4
         
+        // Store the raw flags
         flags = data.subdata(in: currentPosition..<currentPosition+2)
+        
+        // Parse status flags (first byte)
+        if let flagsData = flags, flagsData.count >= 1 {
+            let statusFlags = flagsData[0]
+            isTagAlterPreservation = (statusFlags & 0x80) != 0
+            isFileAlterPreservation = (statusFlags & 0x40) != 0
+            isReadOnly = (statusFlags & 0x20) != 0
+        }
+        
+        // Parse format flags (second byte)
+        if let flagsData = flags, flagsData.count >= 2 {
+            let formatFlags = flagsData[1]
+            isGroupingIdentity = (formatFlags & 0x80) != 0
+            isCompressed = (formatFlags & 0x08) != 0
+            isEncrypted = (formatFlags & 0x04) != 0
+            isUnsynchronized = (formatFlags & 0x02) != 0
+            hasDataLengthIndicator = (formatFlags & 0x01) != 0
+        }
     }
     
     func createDictionary() -> [String:Any]{
         var dict: [String:Any] = [:]
         dict[frameID] = frameID
+        
+        // Add flag information to the dictionary
+        var flagsDict: [String: Any] = [:]
+        flagsDict["tagAlterPreservation"] = isTagAlterPreservation
+        flagsDict["fileAlterPreservation"] = isFileAlterPreservation
+        flagsDict["readOnly"] = isReadOnly
+        flagsDict["groupingIdentity"] = isGroupingIdentity
+        flagsDict["compressed"] = isCompressed
+        flagsDict["encrypted"] = isEncrypted
+        flagsDict["unsynchronized"] = isUnsynchronized
+        flagsDict["dataLengthIndicator"] = hasDataLengthIndicator
+        
+        dict["flags"] = flagsDict
         
         return dict
     }
@@ -63,6 +113,23 @@ public class Frame: Decodable {
         frameID = try container.decode(String.self, forKey: .frameID)
         size = try container.decode(Int.self, forKey: .size)
         flags = try container.decodeIfPresent(Data.self, forKey: .flags)
+        
+        // Parse flags if available
+        if let flagsData = flags, flagsData.count >= 2 {
+            // Parse status flags (first byte)
+            let statusFlags = flagsData[0]
+            isTagAlterPreservation = (statusFlags & 0x80) != 0
+            isFileAlterPreservation = (statusFlags & 0x40) != 0
+            isReadOnly = (statusFlags & 0x20) != 0
+            
+            // Parse format flags (second byte)
+            let formatFlags = flagsData[1]
+            isGroupingIdentity = (formatFlags & 0x80) != 0
+            isCompressed = (formatFlags & 0x08) != 0
+            isEncrypted = (formatFlags & 0x04) != 0
+            isUnsynchronized = (formatFlags & 0x02) != 0
+            hasDataLengthIndicator = (formatFlags & 0x01) != 0
+        }
     }
     
     class func createInstance(data: Data) -> Frame {
@@ -95,37 +162,67 @@ public class Frame: Decodable {
     
     
     func extractTitle(from data: Data) -> (title: String?, encoding: String.Encoding, offset: Int?){
+        // Check if we have enough data
+        guard data.count > 0 else {
+            print("Error: Empty data in extractTitle")
+            return (title: nil, encoding: .isoLatin1, offset: 0)
+        }
+        
         var currentPosition = 0
         let subFrameEnd = data.count
         
+        // Get the encoding byte
         let encodingByte = data[currentPosition]
         let encoding = getEndcoding(with: encodingByte)
         
-        
         currentPosition += 1
+        
+        // If we don't have any more data after the encoding byte
+        guard currentPosition < subFrameEnd else {
+            print("Error: No data after encoding byte")
+            return (title: nil, encoding: encoding, offset: currentPosition)
+        }
+        
         var endofString = subFrameEnd
-                
-        if let utf16String = String(data: data.subdata(in: (currentPosition..<subFrameEnd)), encoding: encoding) {
-            // Find the null termination
-            if let nullTerminationRange = utf16String.range(of: "\0") {
-                endofString = nullTerminationRange.lowerBound.utf16Offset(in: utf16String) + currentPosition
-                let nullTerminatedString = utf16String[utf16String.startIndex..<nullTerminationRange.lowerBound]
-                return (title: String(nullTerminatedString), encoding: encoding, offset: endofString)
-            } else {
-                print("No null termination found.")
+        
+        // Try to find null termination based on encoding
+        if encoding == .utf16 || encoding == .utf16BigEndian {
+            // For UTF-16, we need to look for null bytes in pairs
+            var foundNull = false
+            for i in stride(from: currentPosition, to: subFrameEnd - 1, by: 2) {
+                if data[i] == 0 && data[i+1] == 0 {
+                    endofString = i
+                    foundNull = true
+                    break
+                }
+            }
+            
+            if !foundNull {
+                print("No null termination found in UTF-16 data.")
             }
         } else {
-            print("Unable to decode data as UTF-16.")
+            // For other encodings, look for a single null byte
+            if let nullIndex = data[currentPosition..<subFrameEnd].firstIndex(of: 0) {
+                endofString = nullIndex
+            } else {
+                print("No null termination found in data.")
+            }
         }
         
-        if let information = String(data:  data.subdata(in: (currentPosition..<endofString)), encoding: encoding){
-            return (title: information, encoding: encoding, offset: endofString)
-
-        }else{
-            return (title: nil, encoding: encoding, offset: 0)
-
+        // Extract the string with the detected encoding
+        if let extractedString = String(data: data.subdata(in: currentPosition..<endofString), encoding: encoding) {
+            return (title: extractedString, encoding: encoding, offset: endofString)
+        } else {
+            // Fallback: try to decode with ISO-8859-1 if the original encoding failed
+            if encoding != .isoLatin1, 
+               let fallbackString = String(data: data.subdata(in: currentPosition..<endofString), encoding: .isoLatin1) {
+                print("Warning: Failed to decode with \(encoding), falling back to ISO-8859-1")
+                return (title: fallbackString, encoding: .isoLatin1, offset: endofString)
+            }
+            
+            print("Error: Unable to decode data with any encoding")
+            return (title: nil, encoding: encoding, offset: currentPosition)
         }
-        
     }
     
 
@@ -334,19 +431,23 @@ public class ChapFrame:Frame{
     var frames:[Frame] = []
     
     required init(data:Data){
-        
         super.init(data: data)
-
-    
+        
         // CHAP Frame Required Elements Starting after the Header data (always 10 bytes)
         var currentPosition = headerSize
+        
+        // Read text encoding byte for elementID
+        let textEncoding = getEndcoding(with: data[currentPosition])
+        currentPosition += 1
+        
+        // Read elementID with proper encoding
         if let range = data[currentPosition..<currentPosition+size].range(of: Data([0])) {
             let nullTerminatedData = data.subdata(in: (currentPosition..<range.lowerBound))
-            elementID = String(data: nullTerminatedData, encoding: .utf8) ?? ""
-            currentPosition = range.lowerBound
-            currentPosition += 1 // <- move passed NULL-terminator
+            elementID = String(data: nullTerminatedData, encoding: textEncoding) ?? ""
+            currentPosition = range.lowerBound + 1 // move passed NULL-terminator
         }
         
+        // Read timestamps and offsets
         startTime = Double(data.readUInt32BigEndian(at: currentPosition))
         currentPosition += 4
         
@@ -359,22 +460,18 @@ public class ChapFrame:Frame{
         endOffset = Int(data.readUInt32BigEndian(at: currentPosition))
         currentPosition += 4
         
-        
-        // OPTIONAL SUB FRAMES
-
-        while currentPosition < size + headerSize {
+        // Read subframes with proper boundary checking
+        while currentPosition < headerSize + size {
+            let remainingSize = headerSize + size - currentPosition
+            guard remainingSize >= 10 else { break } // Minimum frame size
             
-            let subFrameData = data.subdata(in: currentPosition..<data.count)
-    
-            let newFrame =  Frame.createInstance(data: subFrameData)
+            let subFrameData = data.subdata(in: currentPosition..<(currentPosition + remainingSize))
+            let newFrame = Frame.createInstance(data: subFrameData)
             frames.append(newFrame)
-            print("previous subframe: \(currentPosition.description) - \(currentPosition + newFrame.size + headerSize)")
             currentPosition += newFrame.size + headerSize
-
         }
-        
-
     }
+    
     enum ChapCodingKeys: String, CodingKey {
         case elementID, startTime, endTime, startOffset, endOffset, frames
     }
