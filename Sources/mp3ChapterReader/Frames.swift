@@ -184,40 +184,58 @@ public class Frame: Decodable {
         }
         
         var endofString = subFrameEnd
+        var foundNull = false
         
         // Try to find null termination based on encoding
         if encoding == .utf16 || encoding == .utf16BigEndian {
             // For UTF-16, we need to look for null bytes in pairs
-            var foundNull = false
             for i in stride(from: currentPosition, to: subFrameEnd - 1, by: 2) {
+                guard i + 1 < data.count else { break }
+                
                 if data[i] == 0 && data[i+1] == 0 {
                     endofString = i
                     foundNull = true
                     break
                 }
             }
-            
-            if !foundNull {
-                print("No null termination found in UTF-16 data.")
-            }
         } else {
             // For other encodings, look for a single null byte
             if let nullIndex = data[currentPosition..<subFrameEnd].firstIndex(of: 0) {
                 endofString = nullIndex
-            } else {
-                print("No null termination found in data.")
+                foundNull = true
             }
         }
         
+        // Ensure we don't try to create a subdata that's out of bounds
+        guard currentPosition <= endofString, endofString <= data.count else {
+            print("Error: Invalid string bounds (currentPosition: \(currentPosition), endofString: \(endofString), data.count: \(data.count))")
+            return (title: nil, encoding: encoding, offset: currentPosition)
+        }
+        
         // Extract the string with the detected encoding
-        if let extractedString = String(data: data.subdata(in: currentPosition..<endofString), encoding: encoding) {
+        let stringData = data.subdata(in: currentPosition..<endofString)
+        
+        // Only warn about missing null termination if the string appears to be truncated
+        if !foundNull && endofString < subFrameEnd {
+            print("Warning: No null termination found in \(encoding) data, using full length")
+        }
+        
+        // Try to decode with the specified encoding
+        if let extractedString = String(data: stringData, encoding: encoding) {
             return (title: extractedString, encoding: encoding, offset: endofString)
         } else {
-            // Fallback: try to decode with ISO-8859-1 if the original encoding failed
+            // If the original encoding failed, try ISO-8859-1 as a fallback
             if encoding != .isoLatin1, 
-               let fallbackString = String(data: data.subdata(in: currentPosition..<endofString), encoding: .isoLatin1) {
+               let fallbackString = String(data: stringData, encoding: .isoLatin1) {
                 print("Warning: Failed to decode with \(encoding), falling back to ISO-8859-1")
                 return (title: fallbackString, encoding: .isoLatin1, offset: endofString)
+            }
+            
+            // If all else fails, try UTF-8
+            if encoding != .utf8,
+               let utf8String = String(data: stringData, encoding: .utf8) {
+                print("Warning: Failed to decode with \(encoding) and ISO-8859-1, falling back to UTF-8")
+                return (title: utf8String, encoding: .utf8, offset: endofString)
             }
             
             print("Error: Unable to decode data with any encoding")
@@ -436,15 +454,27 @@ public class ChapFrame:Frame{
         // CHAP Frame Required Elements Starting after the Header data (always 10 bytes)
         var currentPosition = headerSize
         
+        // Safety check for minimum data length
+        guard data.count >= currentPosition + 1 else {
+            print("Error: Not enough data for CHAP frame header")
+            return
+        }
+        
         // Read text encoding byte for elementID
         let textEncoding = getEndcoding(with: data[currentPosition])
         currentPosition += 1
         
         // Read elementID with proper encoding
-        if let range = data[currentPosition..<currentPosition+size].range(of: Data([0])) {
+        if let range = data[currentPosition..<min(currentPosition+size, data.count)].range(of: Data([0])) {
             let nullTerminatedData = data.subdata(in: (currentPosition..<range.lowerBound))
             elementID = String(data: nullTerminatedData, encoding: textEncoding) ?? ""
             currentPosition = range.lowerBound + 1 // move passed NULL-terminator
+        }
+        
+        // Safety check for timestamps and offsets
+        guard currentPosition + 16 <= data.count else {
+            print("Error: Not enough data for CHAP frame timestamps and offsets")
+            return
         }
         
         // Read timestamps and offsets
@@ -465,7 +495,13 @@ public class ChapFrame:Frame{
             let remainingSize = headerSize + size - currentPosition
             guard remainingSize >= 10 else { break } // Minimum frame size
             
-            let subFrameData = data.subdata(in: currentPosition..<(currentPosition + remainingSize))
+            // Safety check for subframe data
+            guard currentPosition + remainingSize <= data.count else {
+                print("Error: Subframe data extends beyond available data")
+                break
+            }
+            
+            let subFrameData = data.subdata(in: currentPosition..<min(currentPosition + remainingSize, data.count))
             let newFrame = Frame.createInstance(data: subFrameData)
             frames.append(newFrame)
             currentPosition += newFrame.size + headerSize
