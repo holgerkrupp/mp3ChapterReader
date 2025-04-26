@@ -307,7 +307,7 @@ public class PictureFrame:Frame{
         let subFrameEnd = headerSize + size
         
         var currentPosition = headerSize
-        let stringData = data.subdata(in: currentPosition..<size+headerSize)
+        let stringData = data.subdata(in: currentPosition..<subFrameEnd)
         let extracted = extractTitle(from: stringData)
         mimeType = extracted.title
         
