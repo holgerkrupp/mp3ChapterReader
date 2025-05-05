@@ -256,10 +256,20 @@ public class TextFrame:Frame{
     
     
     
-    required init(data:Data){
+   
+    required init(data: Data) {
         super.init(data: data)
         
-        let stringData = data.subdata(in: headerSize..<size+headerSize)
+        let frameDataStart = headerSize
+        let frameDataEnd = headerSize + size
+        guard data.count >= frameDataEnd else {
+            print("Frame data is incomplete")
+            textEncoding = .utf8
+            information = ""
+            return
+        }
+
+        let stringData = data.subdata(in: frameDataStart..<frameDataEnd)
         let extracted = extractTitle(from: stringData)
         textEncoding = extracted.encoding
         information = extracted.title
