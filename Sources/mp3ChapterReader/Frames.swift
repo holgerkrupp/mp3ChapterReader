@@ -314,9 +314,14 @@ public class PictureFrame:Frame{
     
     required init(data:Data){
         super.init(data: data)
+
         let subFrameEnd = headerSize + size
         
         var currentPosition = headerSize
+        guard data.count >= subFrameEnd else {
+            print("Frame data is incomplete")
+            return
+        }
         let stringData = data.subdata(in: currentPosition..<subFrameEnd)
         let extracted = extractTitle(from: stringData)
         mimeType = extracted.title
