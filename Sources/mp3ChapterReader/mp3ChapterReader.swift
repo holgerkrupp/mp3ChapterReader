@@ -7,8 +7,47 @@
 
 import Foundation
 
+
+public struct ID3Tag: Sendable {
+    public let version: Int
+    public let revision: Int
+    public let frames: [Frame]
+    public let chapters: [ChapFrame]
+}
+
+public actor mp3ChapterParser {
+    
+    public enum ID3Error: Error {
+        case invalidTag
+        case parsingFailed
+
+    }
+    
+    
+    public static func fromRemoteURL(_ url: URL, maxSize: Int = 256_000) async throws -> ID3Tag {
+        let data = try await RemoteID3TagFetcher.fetchID3Tag(from: url, maxSize: maxSize)
+
+        guard data.starts(with: Data("ID3".utf8)) else {
+            throw ID3Error.invalidTag
+        }
+
+        // Parse tag here using your existing logic...
+        let reader = mp3ChapterReader(fromData: data)
+        guard let reader else {
+            throw ID3Error.parsingFailed
+        }
+
+        return await ID3Tag(
+            version: reader.version,
+            revision: reader.revision,
+            frames: reader.frames,
+            chapters: reader.frames.compactMap { $0 as? ChapFrame }
+        )
+    }
+}
+
 /// A class for reading ID3v2 tags from MP3 files, with special focus on chapter frames
-public class mp3ChapterReader {
+ public class mp3ChapterReader {
     
     /// The raw file data
     private var fileData: Data
@@ -79,6 +118,44 @@ public class mp3ChapterReader {
             return nil
         }
     }
+    
+    public init?(fromData data: Data) {
+        self.fileData = data
+
+        guard data.count >= 10, data.prefix(3) == Data("ID3".utf8) else {
+            print("Not an ID3v2 tag.")
+            return nil
+        }
+
+        version = Int(data[3])
+        revision = Int(data[4])
+        guard version >= 2 && version <= 4 else {
+            print("Unsupported ID3v2 version: \(version)")
+            return nil
+        }
+
+        let flags = data[5]
+        hasUnsynchronization = (flags & 0x80) != 0
+        hasExtendedHeader = (flags & 0x40) != 0
+        isExperimental = (flags & 0x20) != 0
+        hasFooter = (flags & 0x10) != 0
+
+        let sizeBytes = data.subdata(in: 6..<10)
+        tagSize = Int(sizeBytes[0]) << 21 | Int(sizeBytes[1]) << 14 | Int(sizeBytes[2]) << 7 | Int(sizeBytes[3])
+        frames = extractID3Frames()
+    }
+    
+    public static func fromRemoteURL(_ remoteURL: URL, maxTagSize: Int = 256_000) async -> mp3ChapterReader? {
+        do {
+            let tagData = try await RemoteID3TagFetcher.fetchID3Tag(from: remoteURL, maxSize: maxTagSize)
+            return mp3ChapterReader(fromData: tagData)
+        } catch {
+            print("Remote ID3 tag fetch failed: \(error)")
+            return nil
+        }
+    }
+    
+
     
     /// Get a dictionary representation of all ID3v2 frames
     /// - Returns: A dictionary containing all frames and chapters
@@ -208,3 +285,41 @@ public class mp3ChapterReader {
         return frames
     }
 }
+
+
+public enum RemoteID3TagFetcherError: Error {
+    case invalidHeader
+    case unsupportedFormat
+    case tagTooLarge
+    case networkError(Error)
+}
+
+public struct RemoteID3TagFetcher {
+    public static func fetchID3Tag(from url: URL, maxSize: Int = 256_000) async throws -> Data {
+        let header = try await fetchBytes(from: url, range: 0..<10)
+
+        guard header.starts(with: [0x49, 0x44, 0x33]) else {
+            throw RemoteID3TagFetcherError.invalidHeader
+        }
+
+        // Parse synchsafe tag size
+        let sizeBytes = header[6...9]
+        let tagSize = sizeBytes.reduce(0) { ($0 << 7) | Int($1 & 0x7F) }
+
+        let totalSize = 10 + tagSize
+        guard totalSize <= maxSize else {
+            throw RemoteID3TagFetcherError.tagTooLarge
+        }
+
+        return try await fetchBytes(from: url, range: 0..<totalSize)
+    }
+
+    private static func fetchBytes(from url: URL, range: Range<Int>) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.setValue("bytes=\(range.lowerBound)-\(range.upperBound - 1)", forHTTPHeaderField: "Range")
+
+        let (data, _) = try await URLSession.shared.data(for: request)
+        return data
+    }
+}
+

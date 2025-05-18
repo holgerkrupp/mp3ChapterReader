@@ -27,7 +27,7 @@ func getEndcoding(with data: UInt8) -> String.Encoding{
     }
 }
 
-public class Frame: Decodable {
+public class Frame: Decodable, Sendable {
     
     var frameID:String = ""
     var size:Int = 0 // size of the frame, excluding the header
@@ -453,7 +453,7 @@ public class LinkFrame:Frame{
 }
 
 
-public class ChapFrame:Frame{
+public class ChapFrame:Frame, Sendable{
     
     var elementID:String = ""
     var startTime:Double = 0 // in milliseconds
