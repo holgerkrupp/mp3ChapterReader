@@ -15,36 +15,6 @@ public struct ID3Tag: Sendable {
     public let chapters: [ChapFrame]
 }
 
-public actor mp3ChapterParser {
-    
-    public enum ID3Error: Error {
-        case invalidTag
-        case parsingFailed
-
-    }
-    
-    
-    public static func fromRemoteURL(_ url: URL, maxSize: Int = 256_000) async throws -> ID3Tag {
-        let data = try await RemoteID3TagFetcher.fetchID3Tag(from: url, maxSize: maxSize)
-
-        guard data.starts(with: Data("ID3".utf8)) else {
-            throw ID3Error.invalidTag
-        }
-
-        // Parse tag here using your existing logic...
-        let reader = mp3ChapterReader(fromData: data)
-        guard let reader else {
-            throw ID3Error.parsingFailed
-        }
-
-        return await ID3Tag(
-            version: reader.version,
-            revision: reader.revision,
-            frames: reader.frames,
-            chapters: reader.frames.compactMap { $0 as? ChapFrame }
-        )
-    }
-}
 
 /// A class for reading ID3v2 tags from MP3 files, with special focus on chapter frames
  public class mp3ChapterReader {
@@ -145,7 +115,7 @@ public actor mp3ChapterParser {
         frames = extractID3Frames()
     }
     
-    public static func fromRemoteURL(_ remoteURL: URL, maxTagSize: Int = 256_000) async -> mp3ChapterReader? {
+    public static func fromRemoteURL(_ remoteURL: URL, maxTagSize: Int = 1024_000) async -> mp3ChapterReader? {
         do {
             let tagData = try await RemoteID3TagFetcher.fetchID3Tag(from: remoteURL, maxSize: maxTagSize)
             return mp3ChapterReader(fromData: tagData)
@@ -290,12 +260,12 @@ public actor mp3ChapterParser {
 public enum RemoteID3TagFetcherError: Error {
     case invalidHeader
     case unsupportedFormat
-    case tagTooLarge
+    case tagTooLarge(Int)
     case networkError(Error)
 }
 
 public struct RemoteID3TagFetcher {
-    public static func fetchID3Tag(from url: URL, maxSize: Int = 256_000) async throws -> Data {
+    public static func fetchID3Tag(from url: URL, maxSize: Int = 1024_000) async throws -> Data {
         let header = try await fetchBytes(from: url, range: 0..<10)
 
         guard header.starts(with: [0x49, 0x44, 0x33]) else {
@@ -307,8 +277,9 @@ public struct RemoteID3TagFetcher {
         let tagSize = sizeBytes.reduce(0) { ($0 << 7) | Int($1 & 0x7F) }
 
         let totalSize = 10 + tagSize
+        
         guard totalSize <= maxSize else {
-            throw RemoteID3TagFetcherError.tagTooLarge
+            throw RemoteID3TagFetcherError.tagTooLarge(totalSize)
         }
 
         return try await fetchBytes(from: url, range: 0..<totalSize)
