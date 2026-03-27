@@ -1,15 +1,16 @@
 # MP3 Chapter Reader
 
-A Swift package for extracting ID3v2 tags from MP3 files, with special focus on chapter frames. This package allows you to read and parse ID3v2 tags from MP3 files, including text frames, picture frames, link frames, and chapter frames.
+A Swift package for extracting ID3 tags from MP3 files, with special focus on chapter frames. The package reads ID3v2.2, ID3v2.3, and ID3v2.4 tags from local or remote MP3 files and parses a broad range of standard frame families, including chapters and tables of contents.
 
 ## Features
 
 - Read ID3v2 tags from MP3 files (supports ID3v2.2, ID3v2.3, and ID3v2.4)
-- Extract text frames (title, artist, album, etc.)
-- Extract picture frames (album art, etc.)
-- Extract link frames (URLs)
-- Extract chapter frames with subframes
-- Robust error handling and text encoding support
+- Read tags from local files and remote URLs
+- Extract standard text, URL, picture, comment, lyrics, private, counter, and binary frame families
+- Extract chapter (`CHAP`) frames with embedded subframes
+- Extract table of contents (`CTOC`) frames
+- Preserve duplicate frame values instead of silently dropping later entries
+- Handle version-specific frame headers and frame sizes correctly
 - Comprehensive documentation
 
 ## Requirements
@@ -55,7 +56,7 @@ if let mp3Reader = mp3ChapterReader(with: url) {
 
 ### Working with Chapters
 
-The package provides comprehensive support for ID3v2 chapter frames. Each chapter can contain various subframes, such as title, subtitle, picture, and link frames.
+The package provides comprehensive support for ID3 chapter frames. Each chapter can contain various subframes, such as title, subtitle, picture, and link frames. Table-of-contents frames are also exposed separately under `TableOfContents`.
 
 ```swift
 import mp3ChapterReader
@@ -96,26 +97,34 @@ if let mp3Reader = mp3ChapterReader(with: url) {
 }
 ```
 
-### Frame Flags
+### Frame Output
 
-The package supports parsing frame flags, which provide information about how frames should be handled:
+`getID3Dict()` keeps simple text and URL frames easy to consume:
 
 ```swift
 if let mp3Reader = mp3ChapterReader(with: url) {
     let dict = mp3Reader.getID3Dict()
-    
-    if let tit2 = dict["TIT2"] as? [String: Any],
-       let flags = tit2["flags"] as? [String: Any] {
-        let isReadOnly = flags["readOnly"] as? Bool ?? false
-        let isCompressed = flags["compressed"] as? Bool ?? false
-        
-        print("Title frame is read-only: \(isReadOnly)")
-        print("Title frame is compressed: \(isCompressed)")
+
+    let title = dict["TIT2"] as? String
+    let purchaseLink = dict["WCOM"] as? String
+}
+```
+
+Structured frames are returned as dictionaries:
+
+```swift
+if let mp3Reader = mp3ChapterReader(with: url) {
+    let dict = mp3Reader.getID3Dict()
+
+    if let comment = dict["COMM"] as? [String: Any] {
+        print(comment["Language"] ?? "")
+        print(comment["Comment"] ?? "")
     }
 }
 ```
 
+If the same frame occurs more than once, the resulting value becomes an array.
+
 ## License
 
 This package is available under the MIT license. See the LICENSE file for more info.
-

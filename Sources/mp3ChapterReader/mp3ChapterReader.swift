@@ -1,12 +1,4 @@
-//
-//  File.swift
-//  
-//
-//  Created by Holger Krupp on 02.03.24.
-//
-
 import Foundation
-
 
 public struct ID3Tag: Sendable {
     public let version: Int
@@ -15,107 +7,56 @@ public struct ID3Tag: Sendable {
     public let chapters: [ChapFrame]
 }
 
-
-/// A class for reading ID3v2 tags from MP3 files, with special focus on chapter frames
- public class mp3ChapterReader {
-    
-    /// The raw file data
+public class mp3ChapterReader {
     private var fileData: Data
-    
-    /// The extracted ID3v2 frames
+
     public var frames: [Frame] = []
-    
-    /// The ID3v2 version (e.g., 2, 3, 4)
+
     public var version: Int = 0
-    
-    /// The ID3v2 revision
     public var revision: Int = 0
-    
-    /// Whether the file has an extended header
+
     public var hasExtendedHeader: Bool = false
-    
-    /// Whether the file has experimental indicators
     public var isExperimental: Bool = false
-    
-    /// Whether the file has a footer
     public var hasFooter: Bool = false
-    
-    /// Whether the file has unsynchronization
     public var hasUnsynchronization: Bool = false
-    
-    /// The size of the ID3v2 tag in bytes
+    public var isCompressedTag: Bool = false
+
     public var tagSize: Int = 0
-    
-    /// Initialize a new mp3ChapterReader with a file URL
-    /// - Parameter fileURL: The URL of the MP3 file to read
-    /// - Returns: An initialized mp3ChapterReader or nil if the file cannot be read or doesn't contain an ID3v2 tag
+
+    public var chapters: [ChapFrame] {
+        frames.compactMap { $0 as? ChapFrame }
+    }
+
+    public var tablesOfContents: [CTOCFrame] {
+        frames.compactMap { $0 as? CTOCFrame }
+    }
+
     public init?(with fileURL: URL) {
         do {
             fileData = try Data(contentsOf: fileURL)
-            
-            // Check if the file starts with "ID3" (indicating it's an ID3v2 tag)
-            guard fileData.count >= 10, fileData.prefix(3) == Data("ID3".utf8) else {
-                print("Not an ID3v2 tag.")
-                return nil
-            }
-            
-            // Parse the ID3v2 tag header
-            version = Int(fileData[3])
-            revision = Int(fileData[4])
-            
-            // Check if this is a supported version
-            guard version >= 2 && version <= 4 else {
-                print("Unsupported ID3v2 version: \(version)")
-                return nil
-            }
-            
-            // Parse the flags
-            let flags = fileData[5]
-            hasUnsynchronization = (flags & 0x80) != 0
-            hasExtendedHeader = (flags & 0x40) != 0
-            isExperimental = (flags & 0x20) != 0
-            hasFooter = (flags & 0x10) != 0
-            
-            // Parse the tag size (4 bytes, most significant bit of each byte is not used)
-            let sizeBytes = fileData.subdata(in: 6..<10)
-            tagSize = Int(sizeBytes[0]) << 21 | Int(sizeBytes[1]) << 14 | Int(sizeBytes[2]) << 7 | Int(sizeBytes[3])
-            
-            // Extract the frames
-            frames = extractID3Frames()
-            
         } catch {
             print("Error reading file: \(error)")
             return nil
         }
-    }
-    
-    public init?(fromData data: Data) {
-        self.fileData = data
 
-        guard data.count >= 10, data.prefix(3) == Data("ID3".utf8) else {
-            print("Not an ID3v2 tag.")
+        guard parseHeader(from: fileData) else {
             return nil
         }
 
-        version = Int(data[3])
-        revision = Int(data[4])
-        guard version >= 2 && version <= 4 else {
-            print("Unsupported ID3v2 version: \(version)")
-            return nil
-        }
-
-        let flags = data[5]
-        hasUnsynchronization = (flags & 0x80) != 0
-        hasExtendedHeader = (flags & 0x40) != 0
-        isExperimental = (flags & 0x20) != 0
-        hasFooter = (flags & 0x10) != 0
-
-        let sizeBytes = data.subdata(in: 6..<10)
-        tagSize = Int(sizeBytes[0]) << 21 | Int(sizeBytes[1]) << 14 | Int(sizeBytes[2]) << 7 | Int(sizeBytes[3])
         frames = extractID3Frames()
     }
-    
-    public static func fromRemoteURL(_ remoteURL: URL, maxTagSize: Int = 1024_000) async -> mp3ChapterReader? {
+
+    public init?(fromData data: Data) {
+        fileData = data
+
+        guard parseHeader(from: data) else {
+            return nil
+        }
+
+        frames = extractID3Frames()
+    }
+
+    public static func fromRemoteURL(_ remoteURL: URL, maxTagSize: Int = 1_024_000) async -> mp3ChapterReader? {
         do {
             let tagData = try await RemoteID3TagFetcher.fetchID3Tag(from: remoteURL, maxSize: maxTagSize)
             return mp3ChapterReader(fromData: tagData)
@@ -124,138 +65,112 @@ public struct ID3Tag: Sendable {
             return nil
         }
     }
-    
 
-    
-    /// Get a dictionary representation of all ID3v2 frames
-    /// - Returns: A dictionary containing all frames and chapters
     public func getID3Dict() -> [String: Any] {
-        return convertArrayToDictionary(frames)
+        convertFramesToDictionary(frames)
     }
-    
-    /// Convert an array of frames to a dictionary
-    /// - Parameter instances: The array of frames to convert
-    /// - Returns: A dictionary containing all frames and chapters
-    private func convertArrayToDictionary<T: Decodable>(_ instances: [T]) -> [String: Any] {
+
+    public func getID3Tag() -> ID3Tag {
+        ID3Tag(version: version, revision: revision, frames: frames, chapters: chapters)
+    }
+
+    private func parseHeader(from data: Data) -> Bool {
+        guard data.count >= 10, data.prefix(3) == Data("ID3".utf8) else {
+            print("Not an ID3v2 tag.")
+            return false
+        }
+
+        version = Int(data[3])
+        revision = Int(data[4])
+
+        guard version >= 2 && version <= 4 else {
+            print("Unsupported ID3v2 version: \(version)")
+            return false
+        }
+
+        let flags = data[5]
+        hasUnsynchronization = (flags & 0x80) != 0
+
+        switch version {
+        case 2:
+            isCompressedTag = (flags & 0x40) != 0
+            hasExtendedHeader = false
+            isExperimental = false
+            hasFooter = false
+        case 3:
+            hasExtendedHeader = (flags & 0x40) != 0
+            isExperimental = (flags & 0x20) != 0
+            hasFooter = false
+        default:
+            hasExtendedHeader = (flags & 0x40) != 0
+            isExperimental = (flags & 0x20) != 0
+            hasFooter = (flags & 0x10) != 0
+        }
+
+        tagSize = data.readSynchsafeInt(at: 6)
+        return true
+    }
+
+    private func convertFramesToDictionary(_ frames: [Frame]) -> [String: Any] {
         var framesDictionary: [String: Any] = [:]
         var chaptersDictionary: [String: Any] = [:]
-        
-        for instance in instances {
-            if let frame = instance as? ChapFrame {
-                chaptersDictionary[frame.elementID] = frame.createDictionary()
-            } else if let frame = instance as? Frame {
-                if let frameID = frame.frameID.isEmpty ? nil : frame.frameID {
-                    let frameDictionary = frame.createDictionary()
-                    framesDictionary.merge(frameDictionary) { old, new in
-                        old
-                    }
-                }
+        var tablesOfContentsDictionary: [String: Any] = [:]
+
+        for frame in frames {
+            if let chapterFrame = frame as? ChapFrame {
+                chaptersDictionary[chapterFrame.elementID] = chapterFrame.createDictionary()
+                continue
             }
+
+            if let tocFrame = frame as? CTOCFrame {
+                tablesOfContentsDictionary[tocFrame.elementID] = tocFrame.createDictionary()
+                continue
+            }
+
+            mergeFrameDictionary(into: &framesDictionary, frameDictionary: frame.createDictionary())
         }
-        
-        var resultDictionary: [String: Any] = [:]
-        
-        if !framesDictionary.isEmpty {
-            resultDictionary = framesDictionary
-        }
-        
+
         if !chaptersDictionary.isEmpty {
-            resultDictionary["Chapters"] = chaptersDictionary
+            framesDictionary["Chapters"] = chaptersDictionary
         }
-        
-        return resultDictionary
+        if !tablesOfContentsDictionary.isEmpty {
+            framesDictionary["TableOfContents"] = tablesOfContentsDictionary
+        }
+
+        return framesDictionary
     }
-    
-    /// Extract all ID3v2 frames from the file
-    /// - Returns: An array of frames
+
     private func extractID3Frames() -> [Frame] {
-        // Skip the extended header, if present
+        if version == 2 && isCompressedTag {
+            print("Compressed ID3v2.2 tags are not supported.")
+            return []
+        }
+
         var currentPosition = 10
+
         if hasExtendedHeader {
-            // Extended header is present
             if version == 4 {
-                // ID3v2.4 extended header
-                let extendedHeaderSize = Int(fileData.readUInt32BigEndian(at: currentPosition))
+                let extendedHeaderSize = fileData.readSynchsafeInt(at: currentPosition)
                 currentPosition += extendedHeaderSize
-            } else {
-                // ID3v2.3 extended header
+            } else if version == 3 {
                 let extendedHeaderSize = Int(fileData.readUInt32BigEndian(at: currentPosition))
-                currentPosition += extendedHeaderSize + 4 // +4 for the size bytes
+                currentPosition += extendedHeaderSize + 4
             }
         }
-        
-        // Read frames until the end of the tag
-        var frames: [Frame] = []
-        let tagEnd = 10 + tagSize
-        
-        while currentPosition + 10 <= tagEnd {
-            // Check if we have enough data for a frame header
-            guard currentPosition + 10 <= fileData.count else {
-                print("Error: Unexpected end of file at position \(currentPosition)")
-                break
-            }
-            
-            // Read the frame header
-            let frameIdentifier = String(data: fileData.subdata(in: currentPosition..<(currentPosition + 4)), encoding: .utf8) ?? ""
-            
-            // Check if we've reached the end of the frames
-            if frameIdentifier.isEmpty || frameIdentifier == "\0\0\0\0" {
-                break
-            }
-            
-            let frameSizeBytes = fileData.subdata(in: (currentPosition + 4)..<(currentPosition + 8))
-            let frameFlags = fileData.readUInt16(at: currentPosition + 8)
-            
-            // Parse frame size based on version
-            var frameSize: Int
-            if version == 4 {
-                // ID3v2.4: 4 bytes, most significant bit of each byte is not used
-                frameSize = Int(frameSizeBytes[0]) << 21 | Int(frameSizeBytes[1]) << 14 | Int(frameSizeBytes[2]) << 7 | Int(frameSizeBytes[3])
-            } else {
-                // ID3v2.2/2.3: 4 bytes, all bits are used
-                frameSize = Int(frameSizeBytes.readUInt32BigEndian(at: 0))
-            }
-            
-            // Parse frame flags based on version
-            var formatFlags1: UInt16 = 0
-            var formatFlags2: UInt16 = 0
-            
-            if version == 4 {
-                formatFlags1 = frameFlags & 0b1100000000000000
-                formatFlags2 = frameFlags & 0b0011111100000000
-            } else {
-                formatFlags1 = frameFlags & 0b1100000000000000
-                formatFlags2 = frameFlags & 0b0011000000000000
-            }
-            
-            // Check if we have enough data for the frame
-            guard currentPosition + 10 + frameSize <= fileData.count else {
-                print("Error: Incomplete frame data at position \(currentPosition) in \(fileData.count)")
-                break
-            }
-            
-            // Adjust frame size if needed
-            var adjustedFrameSize = frameSize
-            if version == 4 && (formatFlags2 & 0b0001000000000000) != 0 {
-                // Data length indicator is present
-                adjustedFrameSize += 4
-            }
-            
-            // Extract frame data
-            let frameData = fileData.subdata(in: (currentPosition)..<(currentPosition + 10 + adjustedFrameSize))
-            
-            // Create the appropriate frame instance
-            let frame = Frame.createInstance(data: frameData)
-            frames.append(frame)
-            
-            // Move to the next frame
-            currentPosition += (10 + adjustedFrameSize)
+
+        let tagEnd = min(10 + tagSize, fileData.count)
+        guard currentPosition < tagEnd else {
+            return []
         }
-        
-        return frames
+
+        let frameData = fileData.subdata(in: currentPosition..<tagEnd)
+        return ID3FrameParser.parseFrames(
+            in: frameData,
+            version: version,
+            tagUnsynchronization: hasUnsynchronization
+        )
     }
 }
-
 
 public enum RemoteID3TagFetcherError: Error {
     case invalidHeader
@@ -265,19 +180,18 @@ public enum RemoteID3TagFetcherError: Error {
 }
 
 public struct RemoteID3TagFetcher {
-    public static func fetchID3Tag(from url: URL, maxSize: Int = 1024_000) async throws -> Data {
+    static var session: URLSession = .shared
+
+    public static func fetchID3Tag(from url: URL, maxSize: Int = 1_024_000) async throws -> Data {
         let header = try await fetchBytes(from: url, range: 0..<10)
 
         guard header.starts(with: [0x49, 0x44, 0x33]) else {
             throw RemoteID3TagFetcherError.invalidHeader
         }
 
-        // Parse synchsafe tag size
-        let sizeBytes = header[6...9]
-        let tagSize = sizeBytes.reduce(0) { ($0 << 7) | Int($1 & 0x7F) }
-
+        let tagSize = header.readSynchsafeInt(at: 6)
         let totalSize = 10 + tagSize
-        
+
         guard totalSize <= maxSize else {
             throw RemoteID3TagFetcherError.tagTooLarge(totalSize)
         }
@@ -289,8 +203,11 @@ public struct RemoteID3TagFetcher {
         var request = URLRequest(url: url)
         request.setValue("bytes=\(range.lowerBound)-\(range.upperBound - 1)", forHTTPHeaderField: "Range")
 
-        let (data, _) = try await URLSession.shared.data(for: request)
-        return data
+        do {
+            let (data, _) = try await session.data(for: request)
+            return data
+        } catch {
+            throw RemoteID3TagFetcherError.networkError(error)
+        }
     }
 }
-
