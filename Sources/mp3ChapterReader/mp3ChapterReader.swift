@@ -56,7 +56,7 @@ public class mp3ChapterReader {
         frames = extractID3Frames()
     }
 
-    public static func fromRemoteURL(_ remoteURL: URL, maxTagSize: Int = 1_024_000) async -> mp3ChapterReader? {
+    public static func fromRemoteURL(_ remoteURL: URL, maxTagSize: Int? = nil) async -> mp3ChapterReader? {
         do {
             let tagData = try await RemoteID3TagFetcher.fetchID3Tag(from: remoteURL, maxSize: maxTagSize)
             return mp3ChapterReader(fromData: tagData)
@@ -182,7 +182,7 @@ public enum RemoteID3TagFetcherError: Error {
 public struct RemoteID3TagFetcher {
     static var session: URLSession = .shared
 
-    public static func fetchID3Tag(from url: URL, maxSize: Int = 1_024_000) async throws -> Data {
+    public static func fetchID3Tag(from url: URL, maxSize: Int? = nil) async throws -> Data {
         let header = try await fetchBytes(from: url, range: 0..<10)
 
         guard header.starts(with: [0x49, 0x44, 0x33]) else {
@@ -192,7 +192,7 @@ public struct RemoteID3TagFetcher {
         let tagSize = header.readSynchsafeInt(at: 6)
         let totalSize = 10 + tagSize
 
-        guard totalSize <= maxSize else {
+        if let maxSize, totalSize > maxSize {
             throw RemoteID3TagFetcherError.tagTooLarge(totalSize)
         }
 

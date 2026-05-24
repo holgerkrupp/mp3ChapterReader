@@ -200,6 +200,64 @@ final class ID3ParserTests: XCTestCase {
 
         XCTAssertEqual(reader.getID3Dict()["TIT2"] as? String, "Remote Title")
     }
+
+    func testRemoteReaderFetchesFullHeaderDeclaredTagWhenItExceedsLegacyDefaultLimit() async throws {
+        let imageData = Data(repeating: 0x7B, count: 1_100_000)
+        let chapterBody = makeChapterBody(
+            elementID: "chapter-image",
+            startTime: 0,
+            endTime: 10_000,
+            subframes: [
+                makeV24Frame("TIT2", body: makeTextBody("Image Chapter", encoding: 0x03)),
+                makeV24Frame("APIC", body: makePictureBody(mimeType: "image/jpeg", pictureType: 0x03, description: "cover", imageData: imageData))
+            ]
+        )
+        let tagData = makeTag(
+            version: 4,
+            frames: [
+                makeV24Frame("CHAP", body: chapterBody)
+            ]
+        )
+
+        XCTAssertGreaterThan(tagData.count, 1_024_000)
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        RemoteID3TagFetcher.session = URLSession(configuration: configuration)
+
+        MockURLProtocol.handler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 206,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "audio/mpeg"]
+            )!
+
+            switch request.value(forHTTPHeaderField: "Range") {
+            case "bytes=0-9":
+                return (response, tagData.subdata(in: 0..<10))
+            case "bytes=0-\(tagData.count - 1)":
+                return (response, tagData)
+            default:
+                XCTFail("Unexpected range request: \(request.value(forHTTPHeaderField: "Range") ?? "nil")")
+                return (response, Data())
+            }
+        }
+
+        let remoteURL = URL(string: "https://example.com/large-chapter-image.mp3")!
+        guard let reader = await mp3ChapterReader.fromRemoteURL(remoteURL) else {
+            XCTFail("Remote reader should parse ID3 tags larger than the legacy default limit")
+            return
+        }
+
+        let dict = reader.getID3Dict()
+        let chapters = dict["Chapters"] as? [String: [String: Any]]
+        let chapter = chapters?["chapter-image"]
+        XCTAssertEqual(chapter?["TIT2"] as? String, "Image Chapter")
+
+        let apic = chapter?["APIC"] as? [String: Any]
+        XCTAssertEqual(apic?["Data"] as? Data, imageData)
+    }
 }
 
 private func temporaryFileURL() -> URL {
@@ -289,6 +347,17 @@ private func makeUserLinkBody(description: String, url: String, encoding: UInt8)
 private func makeLegacyPictureBody(format: String, pictureType: UInt8, description: String, imageData: Data) -> Data {
     var body = Data([0x00])
     body.append(Data(format.utf8.prefix(3)))
+    body.append(pictureType)
+    body.append(Data(description.utf8))
+    body.append(0x00)
+    body.append(imageData)
+    return body
+}
+
+private func makePictureBody(mimeType: String, pictureType: UInt8, description: String, imageData: Data) -> Data {
+    var body = Data([0x03])
+    body.append(Data(mimeType.utf8))
+    body.append(0x00)
     body.append(pictureType)
     body.append(Data(description.utf8))
     body.append(0x00)
