@@ -258,6 +258,199 @@ final class ID3ParserTests: XCTestCase {
         let apic = chapter?["APIC"] as? [String: Any]
         XCTAssertEqual(apic?["Data"] as? Data, imageData)
     }
+
+    func testDocumentParseSerializeParseRoundTrip() throws {
+        let tagData = makeTag(
+            version: 4,
+            frames: [
+                makeV24Frame("TIT2", body: makeTextBody("Round Trip", encoding: 0x03)),
+                makeV24Frame("TPE1", body: makeTextBody("Author", encoding: 0x03)),
+                makeV24Frame("TALB", body: makeTextBody("Album", encoding: 0x03)),
+                makeV24Frame("TRCK", body: makeTextBody("1/9", encoding: 0x03)),
+                makeV24Frame("TDRC", body: makeTextBody("2026-05-25", encoding: 0x03)),
+                makeV24Frame("WCOM", body: Data("https://example.com".utf8))
+            ]
+        )
+        let mp3Data = tagData + Data([0xFF, 0xFB, 0x90, 0x64])
+
+        let document = ID3TagDocument(data: mp3Data)
+        let rewritten = try document.serializedMP3Data()
+
+        guard let reader = mp3ChapterReader(fromData: rewritten) else {
+            XCTFail("Serialized document should parse")
+            return
+        }
+
+        let dict = reader.getID3Dict()
+        XCTAssertEqual(reader.version, 4)
+        XCTAssertEqual(dict["TIT2"] as? String, "Round Trip")
+        XCTAssertEqual(dict["TPE1"] as? String, "Author")
+        XCTAssertEqual(dict["TALB"] as? String, "Album")
+        XCTAssertEqual(dict["TRCK"] as? String, "1/9")
+        XCTAssertEqual(dict["TDRC"] as? String, "2026-05-25")
+        XCTAssertEqual(dict["WCOM"] as? String, "https://example.com")
+    }
+
+    func testEditingTitlePreservesAudioBytesExactly() throws {
+        let audioBytes = Data([0xFF, 0xFB, 0x50, 0x80, 0x11, 0x22, 0x33])
+        let mp3Data = makeTag(
+            version: 3,
+            frames: [
+                makeV23Frame("TIT2", body: makeTextBody("Before", encoding: 0x00))
+            ]
+        ) + audioBytes
+
+        var document = ID3TagDocument(data: mp3Data)
+        document.setTextFrame("TIT2", value: "After")
+        let rewritten = try document.serializedMP3Data()
+
+        XCTAssertEqual(rewritten.suffix(audioBytes.count), audioBytes)
+
+        guard let reader = mp3ChapterReader(fromData: rewritten) else {
+            XCTFail("Edited document should parse")
+            return
+        }
+
+        XCTAssertEqual(reader.version, 3)
+        XCTAssertEqual(reader.getID3Dict()["TIT2"] as? String, "After")
+    }
+
+    func testUnknownFramesSurviveRoundTrip() throws {
+        let unknownBody = Data([0xDE, 0xAD, 0xBE, 0xEF, 0x00])
+        let document = ID3TagDocument(
+            version: 4,
+            frames: [
+                .raw(id: "XZZZ", flags: FrameFlags(), body: unknownBody)
+            ],
+            audioPayload: Data([0xFF, 0xFB])
+        )
+
+        let rewritten = try document.serializedMP3Data()
+        let reparsed = ID3TagDocument(data: rewritten)
+
+        guard case .raw(let id, _, let body)? = reparsed.frames.first else {
+            XCTFail("Unknown frame should remain raw")
+            return
+        }
+
+        XCTAssertEqual(id, "XZZZ")
+        XCTAssertEqual(body, unknownBody)
+    }
+
+    func testCompressedFramesStayRawWhenImportedIntoDocument() throws {
+        let textBody = makeTextBody("Compressed Title", encoding: 0x03)
+        var compressedBody = Data(uint32BE(textBody.count))
+        compressedBody.append(textBody)
+        let tagData = makeTag(
+            version: 3,
+            frames: [
+                makeV23Frame("TIT2", body: compressedBody, flags: (0x00, 0x80))
+            ]
+        )
+
+        let document = ID3TagDocument(data: tagData)
+
+        guard case .raw(let id, let flags, let body)? = document.frames.first else {
+            XCTFail("Compressed frame should be preserved as raw")
+            return
+        }
+
+        XCTAssertEqual(id, "TIT2")
+        XCTAssertTrue(flags.isCompressed)
+        XCTAssertEqual(body, compressedBody)
+
+        let rewritten = try document.serializedMP3Data()
+        let reparsed = ID3TagDocument(data: rewritten)
+
+        guard case .raw(let rewrittenID, let rewrittenFlags, let rewrittenBody)? = reparsed.frames.first else {
+            XCTFail("Compressed frame should remain raw after serialization")
+            return
+        }
+
+        XCTAssertEqual(rewrittenID, "TIT2")
+        XCTAssertTrue(rewrittenFlags.isCompressed)
+        XCTAssertEqual(rewrittenBody, compressedBody)
+    }
+
+    func testAPICSurvivesRoundTrip() throws {
+        let imageData = Data([0x89, 0x50, 0x4E, 0x47, 0x01, 0x02])
+        let tagData = makeTag(
+            version: 4,
+            frames: [
+                makeV24Frame("APIC", body: makePictureBody(mimeType: "image/png", pictureType: 0x03, description: "Cover", imageData: imageData))
+            ]
+        )
+
+        let rewritten = try ID3TagDocument(data: tagData).serializedMP3Data()
+
+        guard let reader = mp3ChapterReader(fromData: rewritten) else {
+            XCTFail("Serialized APIC should parse")
+            return
+        }
+
+        let picture = reader.getID3Dict()["APIC"] as? [String: Any]
+        XCTAssertEqual(picture?["MIME type"] as? String, "image/png")
+        XCTAssertEqual(picture?["Description"] as? String, "Cover")
+        XCTAssertEqual(picture?["Type"] as? String, PictureType.coverFront.description)
+        XCTAssertEqual(picture?["Data"] as? Data, imageData)
+    }
+
+    func testCHAPAndCTOCSurviveRoundTrip() throws {
+        let chapter = ID3Chapter(
+            elementID: "chapter-1",
+            startTimeMilliseconds: 1_000,
+            endTimeMilliseconds: 9_000,
+            subframes: [
+                .text(id: "TIT2", value: "Chapter One"),
+                .url(id: "WXXX", url: "https://example.com/chapter-1", description: "Chapter Link")
+            ]
+        )
+        let toc = ID3TableOfContents(
+            elementID: "toc",
+            isTopLevel: true,
+            isOrdered: true,
+            childElementIDs: ["chapter-1"],
+            subframes: [.text(id: "TIT2", value: "Contents")]
+        )
+        let document = ID3TagDocument(version: 4, frames: [.chapter(chapter), .tableOfContents(toc)])
+
+        let rewritten = try document.serializedMP3Data()
+
+        guard let reader = mp3ChapterReader(fromData: rewritten) else {
+            XCTFail("Serialized chapters should parse")
+            return
+        }
+
+        let dict = reader.getID3Dict()
+        let chapters = dict["Chapters"] as? [String: Any]
+        let parsedChapter = chapters?["chapter-1"] as? [String: Any]
+        XCTAssertEqual(parsedChapter?["TIT2"] as? String, "Chapter One")
+        XCTAssertEqual(parsedChapter?["startTime"] as? Double, 1.0)
+        XCTAssertEqual(parsedChapter?["endTime"] as? Double, 9.0)
+
+        let tableOfContents = dict["TableOfContents"] as? [String: Any]
+        let parsedTOC = tableOfContents?["toc"] as? [String: Any]
+        XCTAssertEqual(parsedTOC?["topLevel"] as? Bool, true)
+        XCTAssertEqual(parsedTOC?["ordered"] as? Bool, true)
+        XCTAssertEqual(parsedTOC?["children"] as? [String], ["chapter-1"])
+        XCTAssertEqual(parsedTOC?["TIT2"] as? String, "Contents")
+    }
+
+    func testWritingToTempFileAndReadingBack() throws {
+        let fileURL = temporaryFileURL()
+        var document = ID3TagDocument(audioPayload: Data([0xFF, 0xFB, 0x01, 0x02]))
+        document.setTextFrame("TIT2", value: "Written File")
+
+        try document.write(to: fileURL)
+
+        guard let reader = mp3ChapterReader(with: fileURL) else {
+            XCTFail("Written file should parse")
+            return
+        }
+
+        XCTAssertEqual(reader.version, 4)
+        XCTAssertEqual(reader.getID3Dict()["TIT2"] as? String, "Written File")
+    }
 }
 
 private func temporaryFileURL() -> URL {

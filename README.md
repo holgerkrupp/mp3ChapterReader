@@ -6,10 +6,13 @@ A Swift package for extracting ID3 tags from MP3 files, with special focus on ch
 
 - Read ID3v2 tags from MP3 files (supports ID3v2.2, ID3v2.3, and ID3v2.4)
 - Read tags from local files and remote URLs
+- Edit and write ID3v2.3 and ID3v2.4 tags
 - Extract standard text, URL, picture, comment, lyrics, private, counter, and binary frame families
 - Extract chapter (`CHAP`) frames with embedded subframes
 - Extract table of contents (`CTOC`) frames
 - Preserve duplicate frame values instead of silently dropping later entries
+- Preserve audio payload bytes when rewriting tags
+- Preserve unknown frames by writing their original frame body back unchanged
 - Handle version-specific frame headers and frame sizes correctly
 - Comprehensive documentation
 
@@ -124,6 +127,64 @@ if let mp3Reader = mp3ChapterReader(with: url) {
 ```
 
 If the same frame occurs more than once, the resulting value becomes an array.
+
+### Editing and Writing Tags
+
+`ID3TagDocument` is the mutable writing API. It can load an existing MP3 from `Data` or a file URL, preserve the original audio payload, and serialize a new ID3 tag in front of those unchanged audio bytes. New documents write ID3v2.4 by default; existing ID3v2.3 tags stay v2.3.
+
+```swift
+import mp3ChapterReader
+
+var document = try ID3TagDocument(fileURL: inputURL)
+
+document.setTextFrame("TIT2", value: "New Title")
+document.setTextFrame("TPE1", value: "Artist Name")
+document.setURLFrame("WCOM", url: "https://example.com/buy")
+
+let cover = ID3Picture(
+    mimeType: "image/jpeg",
+    type: .coverFront,
+    description: "Cover",
+    data: imageData
+)
+document.setPictureFrame(cover)
+
+try document.write(to: outputURL)
+```
+
+To remove frames:
+
+```swift
+document.removeTextFrame("TIT2")
+document.removeURLFrame("WCOM")
+document.removePictureFrames()
+```
+
+To replace chapters and write a matching table of contents:
+
+```swift
+let chapters = [
+    ID3Chapter(
+        elementID: "chapter-1",
+        startTimeMilliseconds: 0,
+        endTimeMilliseconds: 60_000,
+        subframes: [
+            .text(id: "TIT2", value: "Opening")
+        ]
+    ),
+    ID3Chapter(
+        elementID: "chapter-2",
+        startTimeMilliseconds: 60_000,
+        endTimeMilliseconds: 120_000,
+        subframes: [
+            .text(id: "TIT2", value: "Middle")
+        ]
+    )
+]
+
+document.replaceChapters(chapters)
+let rewrittenMP3 = try document.serializedMP3Data()
+```
 
 ## License
 

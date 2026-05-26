@@ -7,7 +7,7 @@
 
 import Foundation
 
-public enum PictureType: UInt8, CustomStringConvertible, Decodable {
+public enum PictureType: UInt8, CustomStringConvertible, Decodable, Sendable {
     case other = 0x00
     case fileIcon32x32 = 0x01
     case otherFileIcon = 0x02

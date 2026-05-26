@@ -73,7 +73,7 @@ private let creditsFrameIDs: Set<String> = ["TIPL", "TMCL", "IPLS"]
 private let relativeVolumeFrameIDs: Set<String> = ["RVA2", "RVAD"]
 private let equalisationFrameIDs: Set<String> = ["EQU2", "EQUA"]
 
-public struct FrameFlags: Sendable {
+public struct FrameFlags: Sendable, Equatable {
     public var isTagAlterPreservation = false
     public var isFileAlterPreservation = false
     public var isReadOnly = false

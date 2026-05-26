@@ -1,0 +1,46 @@
+You are working in my Swift package `holgerkrupp/mp3ChapterReader`.
+
+Goal: evolve the package from read-only ID3 parsing into a safe ID3 tag editing/writing library. Keep all existing reader APIs source-compatible.
+
+Please inspect the current package first, then implement a focused first writing API for ID3v2.3/v2.4 tags.
+
+Requirements:
+- Add a mutable tag/document model that can be created from MP3 `Data` or a file URL.
+- Preserve the original audio payload exactly when rewriting tags.
+- Preserve unknown/unhandled frames by writing their original `rawBody` back unchanged.
+- Support serializing at least:
+  - standard text frames like `TIT2`, `TPE1`, `TALB`, `TRCK`, `TDRC`
+  - URL frames
+  - `APIC`
+  - `CHAP` with embedded subframes
+  - `CTOC`
+- Add ergonomic editing helpers:
+  - set/remove text frame
+  - set/remove URL frame
+  - set/remove picture frame
+  - resize picture frame to specific byte size (default don't resize)
+  - set/replace chapters
+- Add public write APIs, for example:
+  - `ID3TagDocument(data:)`
+  - `ID3TagDocument(fileURL:)`
+  - `func serializedMP3Data() throws -> Data`
+  - `func write(to url: URL) throws`
+- Correctly update ID3 header tag size using synchsafe integers.
+- Prefer writing ID3v2.4 by default, but preserve v2.3 when editing an existing v2.3 tag unless there is a clear reason not to.
+- Do not attempt encrypted/compressed frame writing yet; preserve such frames unchanged if possible, otherwise throw a clear error.
+- Add tests for:
+  - parse -> serialize -> parse round trip
+  - editing title preserves audio bytes exactly
+  - unknown frames survive round trip
+  - APIC survives round trip
+  - CHAP/CTOC survives round trip
+  - writing to a temp file and reading back
+- Update README with concise editing examples.
+
+Important design guidance:
+- Keep existing `mp3ChapterReader` parsing APIs working.
+- Avoid putting writing logic in tests only; make public, documented package APIs.
+- Use structured serializers rather than ad hoc string concatenation wherever possible.
+- If the current frame classes are hard to construct publicly, add clear public factory methods or a separate mutable frame enum/model.
+- Keep the first implementation small but correct; do not build a full UI or CLI.
+- Run the package test suite and fix failures.
