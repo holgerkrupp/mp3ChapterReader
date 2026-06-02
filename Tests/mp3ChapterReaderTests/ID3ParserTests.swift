@@ -201,6 +201,55 @@ final class ID3ParserTests: XCTestCase {
         XCTAssertEqual(reader.getID3Dict()["TIT2"] as? String, "Remote Title")
     }
 
+    func testRemoteDurationReaderUsesID3OffsetContentLengthAndFirstMP3Frame() async throws {
+        let tagData = makeTag(
+            version: 4,
+            frames: [
+                makeV24Frame("TIT2", body: makeTextBody("Duration Test", encoding: 0x03))
+            ]
+        )
+        let audioByteCount = 160_000
+        let contentLength = tagData.count + audioByteCount
+        let frameHeader = Data([0xFF, 0xFB, 0x90, 0x64]) // MPEG 1 Layer III, 128 kbps
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        RemoteID3TagFetcher.session = URLSession(configuration: configuration)
+
+        MockURLProtocol.handler = { request in
+            let statusCode = request.httpMethod == "HEAD" ? 200 : 206
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: statusCode,
+                httpVersion: nil,
+                headerFields: [
+                    "Content-Type": "audio/mpeg",
+                    "Content-Length": "\(contentLength)"
+                ]
+            )!
+
+            if request.httpMethod == "HEAD" {
+                return (response, Data())
+            }
+
+            switch request.value(forHTTPHeaderField: "Range") {
+            case "bytes=0-9":
+                return (response, tagData.subdata(in: 0..<10))
+            case "bytes=0-\(tagData.count - 1)":
+                return (response, tagData)
+            case "bytes=\(tagData.count)-\(tagData.count + (64 * 1024) - 1)":
+                return (response, frameHeader + Data(repeating: 0, count: 128))
+            default:
+                XCTFail("Unexpected range request: \(request.value(forHTTPHeaderField: "Range") ?? "nil")")
+                return (response, Data())
+            }
+        }
+
+        let remoteURL = URL(string: "https://example.com/duration.mp3")!
+        let duration = try await RemoteMP3DurationReader.duration(from: remoteURL)
+        XCTAssertEqual(duration, 10, accuracy: 0.01)
+    }
+
     func testRemoteReaderFetchesFullHeaderDeclaredTagWhenItExceedsLegacyDefaultLimit() async throws {
         let imageData = Data(repeating: 0x7B, count: 1_100_000)
         let chapterBody = makeChapterBody(
