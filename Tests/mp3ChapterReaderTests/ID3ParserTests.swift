@@ -201,6 +201,89 @@ final class ID3ParserTests: XCTestCase {
         XCTAssertEqual(reader.getID3Dict()["TIT2"] as? String, "Remote Title")
     }
 
+    func testInjectedRangeFetcherReadsOnlyTheTag() async throws {
+        let tagData = makeTag(
+            version: 4,
+            frames: [
+                makeV24Frame("TIT2", body: makeTextBody("Injected", encoding: 0x03))
+            ]
+        )
+        let file = tagData + Data(repeating: 0xAB, count: 50_000)
+        let requested = RangeLog()
+
+        let reader = try await mp3ChapterReader.fromRemoteTag { range in
+            await requested.append(range)
+            return file.subdata(in: range)
+        }
+
+        XCTAssertEqual(reader.getID3Dict()["TIT2"] as? String, "Injected")
+        let ranges = await requested.ranges
+        XCTAssertEqual(ranges, [0..<10, 0..<tagData.count])
+    }
+
+    func testInjectedRangeFetcherErrorsStayDistinguishable() async {
+        let notID3 = Data("....ftypM4A ".utf8)
+        do {
+            _ = try await mp3ChapterReader.fromRemoteTag { _ in notID3 }
+            XCTFail("Expected invalidHeader")
+        } catch RemoteID3TagFetcherError.invalidHeader {
+        } catch {
+            XCTFail("Unexpected error \(error)")
+        }
+
+        let header = Data([0x49, 0x44, 0x33, 4, 0, 0, 0x7F, 0x7F, 0x7F, 0x7F])
+        do {
+            _ = try await mp3ChapterReader.fromRemoteTag(maxTagSize: 1024) { _ in header }
+            XCTFail("Expected tagTooLarge")
+        } catch RemoteID3TagFetcherError.tagTooLarge {
+        } catch {
+            XCTFail("Unexpected error \(error)")
+        }
+
+        struct Unauthorized: Error {}
+        do {
+            _ = try await mp3ChapterReader.fromRemoteTag { _ in throw Unauthorized() }
+            XCTFail("Expected networkError")
+        } catch RemoteID3TagFetcherError.networkError(let underlying) {
+            XCTAssertTrue(underlying is Unauthorized)
+        } catch {
+            XCTFail("Unexpected error \(error)")
+        }
+
+        let truncated = makeTag(version: 4, frames: [makeV24Frame("TIT2", body: makeTextBody("x", encoding: 0x03))])
+        do {
+            _ = try await mp3ChapterReader.fromRemoteTag { range in
+                range.count == 10 ? truncated.prefix(10) : truncated.prefix(12)
+            }
+            XCTFail("Expected incompleteData")
+        } catch RemoteID3TagFetcherError.incompleteData {
+        } catch {
+            XCTFail("Unexpected error \(error)")
+        }
+    }
+
+    func testRemoteReaderStopsReadingWhenServerIgnoresRange() async throws {
+        let tagData = makeTag(
+            version: 4,
+            frames: [
+                makeV24Frame("TIT2", body: makeTextBody("Whole File", encoding: 0x03))
+            ]
+        )
+        let file = tagData + Data(repeating: 0xAB, count: 2_000_000)
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        RemoteID3TagFetcher.session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, file)
+        }
+
+        let tag = try await RemoteID3TagFetcher.fetchID3Tag(from: URL(string: "https://example.com/whole.mp3")!)
+        XCTAssertEqual(tag.count, tagData.count)
+        XCTAssertEqual(mp3ChapterReader(fromData: tag)?.getID3Dict()["TIT2"] as? String, "Whole File")
+    }
+
     func testRemoteDurationReaderUsesID3OffsetContentLengthAndFirstMP3Frame() async throws {
         let tagData = makeTag(
             version: 4,
@@ -736,4 +819,9 @@ private final class MockURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+}
+
+private actor RangeLog {
+    private(set) var ranges: [Range<Int>] = []
+    func append(_ range: Range<Int>) { ranges.append(range) }
 }

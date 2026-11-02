@@ -66,6 +66,21 @@ public class mp3ChapterReader {
         }
     }
 
+    /// Reads only the ID3 tag through a caller-supplied byte-range fetcher, so
+    /// the caller keeps control of authentication, redirects and privacy.
+    /// Throws `RemoteID3TagFetcherError` instead of returning nil, so a missing
+    /// tag, an oversized tag and a transport failure stay distinguishable.
+    public static func fromRemoteTag(
+        maxTagSize: Int? = RemoteID3TagFetcher.defaultMaxTagSize,
+        fetchRange: @escaping ID3ByteRangeFetcher
+    ) async throws -> mp3ChapterReader {
+        let tagData = try await RemoteID3TagFetcher.fetchID3Tag(maxSize: maxTagSize, fetchRange: fetchRange)
+        guard let reader = mp3ChapterReader(fromData: tagData) else {
+            throw RemoteID3TagFetcherError.unsupportedFormat
+        }
+        return reader
+    }
+
     public func getID3Dict() -> [String: Any] {
         convertFramesToDictionary(frames)
     }
@@ -173,11 +188,20 @@ public class mp3ChapterReader {
 }
 
 public enum RemoteID3TagFetcherError: Error {
+    /// The file does not start with an ID3v2 tag.
     case invalidHeader
+    /// The tag was read but could not be parsed.
     case unsupportedFormat
     case tagTooLarge(Int)
+    /// The fetcher returned fewer bytes than the requested range.
+    case incompleteData(expected: Int, received: Int)
     case networkError(Error)
 }
+
+/// Returns the bytes of `range` from the start of a remote file. It may return
+/// more than requested (for example when a server ignores the Range header);
+/// only the requested prefix is used.
+public typealias ID3ByteRangeFetcher = @Sendable (Range<Int>) async throws -> Data
 
 public enum RemoteMP3DurationReaderError: Error {
     case missingContentLength
@@ -244,12 +268,11 @@ public struct RemoteMP3DurationReader {
     }
 
     private static func fetchBytes(from url: URL, range: Range<Int64>) async throws -> Data {
-        var request = URLRequest(url: url)
-        request.setValue("bytes=\(range.lowerBound)-\(range.upperBound - 1)", forHTTPHeaderField: "Range")
-
         do {
-            let (data, _) = try await RemoteID3TagFetcher.session.data(for: request)
-            return data
+            return try await RemoteID3TagFetcher.fetchBytes(
+                from: url,
+                range: Int(range.lowerBound)..<Int(range.upperBound)
+            )
         } catch {
             throw RemoteMP3DurationReaderError.networkError(error)
         }
@@ -355,9 +378,20 @@ private enum MPEGLayer {
 
 public struct RemoteID3TagFetcher {
     static var session: URLSession = .shared
+    /// Tags with embedded chapter images are rarely larger than a few MB.
+    public static let defaultMaxTagSize = 32 * 1024 * 1024
 
     public static func fetchID3Tag(from url: URL, maxSize: Int? = nil) async throws -> Data {
-        let header = try await fetchBytes(from: url, range: 0..<10)
+        try await fetchID3Tag(maxSize: maxSize) { range in
+            try await fetchBytes(from: url, range: range)
+        }
+    }
+
+    public static func fetchID3Tag(
+        maxSize: Int? = defaultMaxTagSize,
+        fetchRange: @escaping ID3ByteRangeFetcher
+    ) async throws -> Data {
+        let header = try await fetch(0..<10, using: fetchRange)
 
         guard header.starts(with: [0x49, 0x44, 0x33]) else {
             throw RemoteID3TagFetcherError.invalidHeader
@@ -370,18 +404,45 @@ public struct RemoteID3TagFetcher {
             throw RemoteID3TagFetcherError.tagTooLarge(totalSize)
         }
 
-        return try await fetchBytes(from: url, range: 0..<totalSize)
+        return try await fetch(0..<totalSize, using: fetchRange)
     }
 
-    private static func fetchBytes(from url: URL, range: Range<Int>) async throws -> Data {
-        var request = URLRequest(url: url)
-        request.setValue("bytes=\(range.lowerBound)-\(range.upperBound - 1)", forHTTPHeaderField: "Range")
-
+    private static func fetch(_ range: Range<Int>, using fetchRange: ID3ByteRangeFetcher) async throws -> Data {
+        let data: Data
         do {
-            let (data, _) = try await session.data(for: request)
-            return data
+            data = try await fetchRange(range)
+        } catch let error as RemoteID3TagFetcherError {
+            throw error
         } catch {
             throw RemoteID3TagFetcherError.networkError(error)
         }
+        guard data.count >= range.count else {
+            throw RemoteID3TagFetcherError.incompleteData(expected: range.count, received: data.count)
+        }
+        return Data(data.prefix(range.count))
+    }
+
+    /// Reads at most `range.upperBound` bytes even when the server ignores the
+    /// Range header and starts sending the whole file.
+    static func fetchBytes(from url: URL, range: Range<Int>) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.setValue("bytes=\(range.lowerBound)-\(range.upperBound - 1)", forHTTPHeaderField: "Range")
+
+        let (bytes, response) = try await session.bytes(for: request)
+        defer { bytes.task.cancel() }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 200
+        guard (200..<300).contains(status) else {
+            throw RemoteID3TagFetcherError.networkError(URLError(.badServerResponse))
+        }
+        // A 200 response starts at byte 0, so skip to the requested offset.
+        let skip = status == 206 ? 0 : range.lowerBound
+        let limit = skip + range.count
+        var data = Data()
+        data.reserveCapacity(min(limit, 1024 * 1024))
+        for try await byte in bytes {
+            data.append(byte)
+            if data.count >= limit { break }
+        }
+        return Data(data.dropFirst(skip))
     }
 }
